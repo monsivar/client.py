@@ -2136,6 +2136,113 @@ reported candidates. Artifact hashes remain unchanged. No parser, decoder,
 geometry model, semantic field mapping, codec execution, or production
 integration was added.
 
+##### P2-01--P2-08 offset-17+ inner-structure analysis
+
+`scripts/goat_map_inner_structure_analyze.py` uses the structural header view
+only as an entry guard, then inventories opaque bytes at offsets 17--63. It
+does not extend that view or consume any offset as a parsed field:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_inner_structure_analyze.py `
+  --artifact-root .goat-map-phase2 `
+  --output goat-map-p2-01-08-inner-structure-analysis.json
+```
+
+The verified corpus again contains 78 samples from eleven captures with no
+exclusions: 39 stable-form `onMI` values and 39 complete grouped `onArI`
+streams. SHA-256 inventories of all 364 artifact files were identical before
+and after the analysis.
+
+Offset 17 has three observed raw values:
+
+- `0x63`: 22 samples across ten captures, all cadence-associated
+  `serial=1 onArI`;
+- `0xb4`: 17 samples across ten captures, all request-associated
+  `serial=2 onArI`;
+- `0xd8`: all 39 `onMI` samples across eleven captures, including both
+  request- and cadence-associated forms.
+
+Neither message family nor request/cadence association alone explains offset
+17. The family-only candidate is `rejected` by all 17 request-associated
+`onArI` samples because the modal `onArI` value is `0x63`; the association-only
+candidate is `rejected` by 39 of 78 samples because each association occurs in
+both families. The combined observable context is stable without
+counterexamples, however. Within `onArI`, the same split is also stable for the
+observed envelope `serial` values: `serial=1 -> 0x63` and
+`serial=2 -> 0xb4`. This is a structural correlation in the captured corpus,
+not evidence that offset 17 is a protocol field named after either context.
+
+The context-stable relation continues through offset 33. The complete observed
+17-byte runs are:
+
+- `onMI` cadence-associated: `d87941b0124e4b661976770c2fe196de4f`;
+- `onMI` request-associated: `d87941b05cc7ff714f1e78d8dc93bd81d1`;
+- grouped `onArI` cadence-associated / `serial=1`:
+  `63d1dceaf6490fc728b85a4e13e18bae5c`;
+- grouped `onArI` request-associated / `serial=2`:
+  `b4fc81d4375de7a0f636f001dc016fe0ca`.
+
+Each run is observed in ten independent captures and has no counterexample at
+offsets 17--33. It is therefore reported as a `supported`
+context-stable-byte-run candidate. It is not reported as one field, and no
+internal field boundary or semantic role is assigned.
+
+Offset 34 provides the limiting counterexample. The cadence-associated
+`serial=1 onArI` group contains 21 occurrences of `0xe6` and one occurrence of
+`0xf9`; therefore the no-counterexample run stops at offset 33. Other contexts
+being stable at offset 34 does not override that counterexample.
+
+Explicit one-, two-, and four-byte scans from offset 17 found no supported
+field equal to envelope `infoSize` or derived total length. The byte-column
+inventory still groups every raw value by family, association, `serial`,
+`infoSize`, derived length, and control transport so negative results and
+within-context variation remain visible.
+
+There are eight same-capture legacy/N-GIoT control comparisons. Seven are
+byte-identical. The single different pair is the known P2-01
+request-associated `onArI` comparison (1401 versus 1424 derived bytes). Its
+first overall difference is at offset 5 because `infoSize` differs; from offset
+17 the streams share 941 bytes and first differ at absolute offset 958. This is
+retained only as a control observation and is not attributed causally to
+transport.
+
+No structural-header API extension is recommended from this analysis alone.
+No parser, decoder, coordinates, floats, protobuf hypothesis, geometry model,
+or production integration was added.
+
+##### Minimal offset-17--33 inner-structure view
+
+After review of the offset-17+ evidence, a separate pure structural layer was
+added in `deebot_client/diagnostics/goat_map_inner_structure_view.py`. It takes
+an already validated `StructuralHeaderView`; it does not add fields to or
+reinterpret the outer header. The view requires bytes through offset 33,
+preserves bytes 17--33 as `context_signature_raw`, and preserves everything
+from offset 34 as an opaque byte-identical `remainder`.
+
+The repository-safe `onMI` golden values make an important distinction
+explicit. Their raw 17-byte signatures are not identical:
+
+- 52-representation form: `d87941b0124e4b661976770c2fe196de4f`;
+- 876-representation form: `d87941b05cc7ff714f1e78d8dc93bd81d1`.
+
+Both raw patterns map to the same `observed-onMI` context class. The binary
+classification therefore does not use or expose timing-based
+request/cadence roles, while still preserving the actual byte evidence rather
+than collapsing two different representations into one claimed signature.
+
+The two observed grouped `onArI` signatures map to
+`observed-onArI-serial-1` and `observed-onArI-serial-2`. Envelope `serial` is
+optional validating metadata; a known signature paired with the other
+observed serial raises an explicit mismatch. Unknown signatures retain their
+raw bytes, return class `unknown`, and are not rejected when the outer framing
+is otherwise valid. A known signature that conflicts with the already
+validated outer family is a separate explicit structural mismatch.
+
+No byte inside the context signature is exposed as a subfield. Offset 34 and
+later remain opaque, and variation at offset 34 does not affect context
+classification. No timing input, parser, decoder, map model, or production
+integration is involved.
+
 ### 2.3 Decode the static map first
 
 1. Compare repeated `onMI` and `onArI` captures structurally without assuming
