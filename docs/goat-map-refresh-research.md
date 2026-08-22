@@ -786,8 +786,8 @@ until both the static-map and track formats have stable fixtures and tests.
 2. Run while mower state is independently confirmed, preferably active mowing,
    with the official app closed and normal MQ connected.
 3. Record a quiet baseline, activate N-GIoT `appping`, then send exactly one
-   `getMI`. Capture the control response and the following `onMI`/`onArI` window
-   with exact timestamps and map IDs.
+   `getMI` per selected transport. Capture each control response and its
+   following `onMI`/`onArI` window with exact timestamps and map IDs.
 4. Use legacy `getMI` first because it exercises the existing client transport,
    then repeat with N-GIoT `getMI` under the same presence lease as a paired
    control. Do not mix additional JMQ or control factors into these runs.
@@ -799,13 +799,56 @@ map-ID context and no secrets in the artifact.
 
 ### 2.2 Raw, sanitized capture artifacts
 
-Store Phase 2 captures in an explicit, git-ignored local artifact selected by a
-new CLI option. Each record should retain the sanitized protocol envelope,
-command, direction, transport/session, timestamp, mower state, map ID, payload
-type/encoding, byte length, and SHA-256 digest. Opaque map-bearing fields needed
-for later decoding may be retained verbatim in that local artifact, while
-credentials, tokens, request IDs, account/device identities, and complete MQTT
-topics remain redacted or omitted. Nothing opaque is printed to the console.
+The implemented capture infrastructure stores Phase 2 data in an explicit,
+git-ignored `.goat-map-phase2/` artifact selected by CLI option. Its
+`manifest.json` has schema version `goat-static-map-capture/v1` and a new random
+`uuid4().hex` `capture_id`. This ID is generated locally and is not derived from
+an account, client resource, or mower identity.
+
+`records.jsonl` can preserve all members of the static-map capture family:
+`getMI`, `onMI`, `onArI`, `getAreaSet`, and `onAreaSet`. Supporting these
+commands does not imply that all are required or share an encoding. The first
+test sends only `getMI`; area-set messages are retained only if observed.
+
+Each record contains sanitized envelope structure, command, direction,
+transport/session, timestamp, mower state, map IDs, source representation, and
+opaque segment references. Opaque segment bytes are content-addressed under
+`blobs/<sha256>.bin`, with byte length and SHA-256. Identical segments share one
+blob. Each reference is shaped conceptually as:
+
+```json
+{
+  "source_path": "$.body.data.info",
+  "representations": {
+    "original": {
+      "kind": "json-string-utf8-value",
+      "blob": "blobs/<sha256>.bin",
+      "sha256": "<sha256>",
+      "byte_length": 123
+    },
+    "decoded": null
+  }
+}
+```
+
+`original` is the exact captured opaque value representation. `decoded` remains
+`null`; a later decoder can add a distinct derived representation without
+overwriting or reinterpreting the original blob. JSON strings are stored as
+their exact UTF-8 logical value. Structured opaque values are labeled
+`canonical-json-v1`, so they are never misrepresented as original HTTP/MQTT
+wire framing.
+
+The writer is fail-closed. Before publishing anything, it rejects invalid JSON,
+registered secret canaries, sensitive fields, request-shaped IDs, known
+account/device/client values, or configured byte-limit violations. A known
+transport `reqid` inside the protocol `header` is handled as removable envelope
+metadata: it is redacted in the sanitized envelope and excluded from opaque
+segment extraction. The same field outside that allowlisted location still
+rejects the entire artifact. The writer stores data in memory first and
+atomically publishes only after a successful run. Credentials, tokens, SST
+tokens, request IDs, account/device identities, and complete MQTT topics are
+never part of the artifact. Nothing opaque is printed to the console or copied
+into the sanitized summary report.
 
 Use a versioned capture schema and enforce size limits. Add tests proving both
 round-trip preservation of permitted opaque fields and removal of all known
@@ -815,6 +858,1136 @@ reduced before they enter the repository.
 Exit criterion: the same raw map-bearing value can be reproduced byte-for-byte
 from the local artifact, while a secret-canary test proves sensitive auth and
 identity data cannot survive serialization.
+
+### 2.2.1 First capture: `p2-01-getmi-paired-mowing`
+
+Run only while mowing is independently confirmed and the official app is
+closed. The runner uses normal MQ without JMQ, records a 30-second baseline,
+sends N-GIoT `appping`, confirms a new `onPos`, sends one legacy `getMI`, waits
+45 seconds, uses a 30-second cooldown, sends one N-GIoT `getMI`, then records a
+45-second response window and a 30-second tail. This remains within one
+presence lease under normal response timing.
+
+PowerShell command:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --country NO `
+  --phase p2-01-getmi-paired-mowing `
+  --mower-state mowing `
+  --device-class 2i0fns `
+  --baseline-seconds 30 `
+  --live-confirmation-timeout 30 `
+  --post-get-mi-seconds 45 `
+  --cooldown-seconds 30 `
+  --tail-seconds 30 `
+  --artifact-dir .goat-map-phase2\p2-01-getmi-paired-mowing `
+  --report-output goat-map-p2-01-summary.json
+```
+
+The artifact directory must not exist before the run. Send back only the
+sanitized summary JSON and the console summary initially; retain the opaque
+artifact locally until its contents and sharing procedure have been reviewed.
+
+#### P2-01 paired capture result
+
+Capture `p2-01-getmi-paired-mowing` completed on 2026-08-22 with normal MQ,
+N-GIoT `appping`, legacy `getMI`, and N-GIoT `getMI`, in that order. The mower
+state remained recorded as `mowing`; this run did not independently establish
+the physical state beyond the declared/observed diagnostic context. The
+30-second baseline contained no `onPos`, `onMapTrack`, `onMI`, or `onArI`.
+
+N-GIoT `appping` was observed on normal MQ at 12:15:02.404 UTC. The first
+`onPos` followed after about 184 ms and the first `onMapTrack` after about
+1.72 seconds. Across the full capture normal MQ retained 286 `onPos` events,
+64 `onMapTrack`, four `onMI`, and six `onArI`; `onPos` had a median interval of
+about 511 ms. Live position/track events retained map ID `0`, while every
+captured `onMI`/`onArI` retained map ID `1`.
+
+The legacy `getMI` request was observed at 12:15:22.547 UTC. `onMI` followed
+about 111 ms later and two distinct `onArI` events about 117 ms later. The
+normal-MQ response and legacy command result completed in the same interval.
+The N-GIoT `getMI` request was observed at 12:16:37.800 UTC. Its `onMI` followed
+about 119 ms later, followed by two distinct `onArI` events within 120 ms; the
+normal-MQ and N-GIoT HTTP responses completed within about 124 ms. Thus both
+control transports directly produced the same observable static-map event
+family and nearly identical response timing in this run.
+
+The immediate legacy and N-GIoT `onMI` records contain byte-identical opaque
+`body.data.info` values (876 bytes and the same SHA-256 digest). Their recorded
+`centerX` and `centerY` values also have matching digests. Later periodic
+`onMI` records contain a different, shorter `info` value (52 bytes), which is
+itself byte-identical across two observations roughly 60 seconds apart. The
+paired immediate `onArI` records have distinct `info` digests and lengths:
+1024/844 bytes after legacy and 1024/876 bytes after N-GIoT. These are direct
+representation-level observations only; no chunking, compression, encoding,
+or semantic role is inferred yet.
+
+The normal-MQ response to each `getMI` and the N-GIoT HTTP response share the
+same retained header-segment digests and contain no captured opaque map value.
+The legacy command result adds only legacy wrapper metadata to the equivalent
+response. This indicates that, for this capture, the map-bearing values arrived
+through `onMI`/`onArI`, not in the direct `getMI` acknowledgement. No
+`getAreaSet` or `onAreaSet` was observed. The local artifact contains 16 records,
+33 unique deduplicated blobs, and 6387 opaque bytes. Payload decoding remained
+disabled throughout.
+
+#### P2-02 paired repeat result
+
+The first P2-02 attempt did not satisfy the live-stream precondition: no
+`onPos` arrived within 30 seconds after N-GIoT `appping`, so the run aborted
+before either `getMI` action and published neither artifact nor summary. This is
+not negative map-format evidence; the mower's physical state was not
+independently established by that failed attempt.
+
+The successful repeat later completed with 44 static-family records, 39 unique
+blobs, and 3946 opaque bytes. Its baseline was not quiet: it already contained
+67 `onPos`, 17 `onMapTrack`, one `onMI`, and one `onArI`. The run therefore
+confirms an active stream but cannot independently attribute activation to its
+own `appping` call. Across the complete run normal MQ observed 372 `onPos`, 98
+`onMapTrack`, seven `onMI`, and eleven `onArI`; no `onAreaSet` was observed.
+
+The `appping` window also contained a broad group of control requests that the
+capture script does not issue, including `getInfo`, `getPos`, `getMapTrack`,
+`getMI`, and `getAreaSet`. Eight `getAreaSet` requests and eight matching
+responses were retained. This sequence is classified as `concurrent-external`,
+with the note `temporally correlated with Home Assistant frontend reload`.
+The operator pressed F5/reload in the Home Assistant browser at approximately
+14:28 local time and did not knowingly open the Ecovacs app. Other household
+members may nevertheless have had the official app open at the same time; that
+possibility cannot currently be excluded. Temporal correlation therefore does
+not establish causation or identify which client issued the requests. The
+sequence is retained as a valuable observation but is excluded from controlled
+transport evidence until its source is confirmed.
+
+Source inspection on 2026-08-22 narrows, but does not resolve, the attribution.
+The built-in Home Assistant Ecovacs mower entity subscribes only to mower state
+and exposes start, pause, and dock actions; the local `2i0fns` capability profile
+does not expose the existing `Map` capability. A normal Lovelace reload of that
+built-in entity therefore does not by itself explain this GOAT map-command
+family.
+
+The optional card in `Janverhu/ecovacs-goat-g1` is a plausible HA-side trigger.
+Its `connectedCallback()` invokes `request_live_position_stream` when the card
+is visible and the mower state is `mowing`; visibility/intersection changes can
+invoke the same service. The inspected coordinator starts app-presence MQTT and
+issues `getPos` for the O-series live-position path. Its regular coordinator
+refresh also emits grouped `getInfo` requests containing commands observed in
+the concurrent sequence, including `getOta` and `getScheduleLatestTask`, plus a
+separate `getLifeSpan`. This could explain part of the broad refresh near the
+reload. However, the inspected O-series live-position service does not itself
+issue `getMI`, `getAreaSet`, or `getMapTrack`, so it does not yet explain the
+complete sequence. An official app session belonging to another household
+member, a different installed card/integration version, or another GOAT client
+remains possible. The retained classification is therefore
+`concurrent-external`, not Home Assistant traffic and not official-app traffic.
+
+Despite that confounder, the explicitly labelled paired actions repeat the
+central representation result. Legacy `getMI` produced `onMI` after about
+148 ms and its two `onArI` events within about 150 ms. N-GIoT `getMI` produced
+the same event family after about 4.49 seconds in this run. Every immediate
+`onMI`, including the concurrently solicited events, contains the same 876-byte
+`body.data.info` digest observed in P2-01. The periodic 52-byte `onMI.info`
+digest is also identical across P2-01 and P2-02. This establishes byte-level
+stability of both observed `onMI` forms across two captures and both explicit
+control transports, without assigning either form a decoded meaning.
+
+Within P2-02 each immediate `onArI` pair repeats the same two opaque values
+(1024 and 888 bytes respectively), across concurrent, legacy, and N-GIoT
+requests. The periodic `onArI` form is independently stable at 800 bytes. These
+digests differ from P2-01's `onArI` values, so `onArI` is not yet demonstrated
+to be invariant across runs. No encoding or segmentation explanation is
+assumed.
+
+The captured `getAreaSet` envelope exposes request metadata fields `mid`, `aid`,
+and `type`. Its response adds `subsets` and `infoSize`. Two opaque `subsets`
+representations recur (124 and 24 bytes), but they remain out of decode scope
+until `onMI`/`onArI` is understood. All records retained map ID `1` for the
+static-map family and map ID `0` for live position/track traffic.
+
+#### P2-03 controlled frontend-reload attribution
+
+Before using the concurrent P2-02 `getAreaSet` sequence as evidence, run one
+passive attribution control while active mowing is physically confirmed. The
+official Ecovacs app should be closed on known devices as far as practical.
+The diagnostic connects only normal MQ, issues no `appping`, `getMI`, or other
+control action, records a 45-second baseline, then waits for the operator to arm
+the reload window. Once the console prints `RELOAD NOW`, press F5 exactly once
+on the same Home Assistant dashboard containing the GOAT card. The following
+90 seconds are labelled `frontend-reload-window`; this label is temporal and
+does not attribute a client source.
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode frontend-reload-attribution `
+  --country NO `
+  --phase p2-03-ha-frontend-reload-attribution `
+  --mower-state mowing `
+  --device-class 2i0fns `
+  --baseline-seconds 45 `
+  --reload-window-seconds 90 `
+  --artifact-dir .goat-map-phase2\p2-03-ha-frontend-reload-attribution `
+  --report-output goat-map-p2-03-summary.json
+```
+
+The summary retains exact timestamps and offsets from the window marker for
+`getInfo`, `getPos`, `getMapTrack`, `getMI`, and `getAreaSet`, including separate
+request/response/event counts. It always records classification
+`concurrent-external` and client source `unattributed`. A tightly repeated full
+pattern would be strong evidence for HA/GOAT-card-related initiation, but not
+proof of the exact process. A `getInfo`/`getPos`-only result with no
+`getMapTrack`, `getMI`, or `getAreaSet` would instead strengthen the other-client
+hypothesis. The static-map artifact remains byte-preserving and decoder-free.
+
+The completed P2-03 run started its reload window at
+13:04:16.315536 UTC. No `getInfo`, `getPos`, `getMapTrack`, `getMI`, or
+`getAreaSet` request or response appeared anywhere in the following 90 seconds;
+`getAreaSet` count was zero. The broad P2-02 control sequence therefore did not
+reproduce after this F5 action.
+
+Live pushes were already active before F5. The 45-second baseline contained 72
+`onPos` and six `onMapTrack`; the reload window contained 153 and 35
+respectively. `onPos` occurred 0.378 seconds before and 0.137 seconds after the
+window marker, while `onMapTrack` occurred 1.556 seconds before and 0.464
+seconds after it. This is an uninterrupted existing stream, not evidence that
+F5 activated it. One `onMI`/`onArI` pair arrived at 13:03:54.868/54.875 UTC and
+the next at 13:04:55.048/55.048 UTC, intervals of approximately 60.180 and
+60.174 seconds. The stable 52-byte `onMI.info` digest repeated. Their cadence
+is consistent with periodic traffic and not a response tightly following the
+reload marker.
+
+This result strengthens the hypothesis that P2-02's broad request sequence came
+from another client, including a possible household Ecovacs app session. It
+does not prove that conclusion: the HA/GOAT coordinator may suppress a repeated
+live-stream request while an existing presence/stream lease is active. The
+P2-02 sequence remains `concurrent-external`, and the P2-03 trigger remains
+temporally labelled rather than client-attributed.
+
+#### P2-04 official-app-open positive control
+
+Use the same passive design as a positive control. Physically confirm mowing,
+force-close the official app on the operator-controlled device, leave the HA
+dashboard untouched, and start the command below. At the marker, open the
+official Ecovacs app directly to this mower's map view without performing other
+actions. The tool still issues no device-control command and labels the window
+`official-app-open-window`; client source remains `unattributed` until the
+observed timing is evaluated.
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode official-app-open-attribution `
+  --country NO `
+  --phase p2-04-official-app-open-attribution `
+  --mower-state mowing `
+  --device-class 2i0fns `
+  --baseline-seconds 45 `
+  --trigger-window-seconds 90 `
+  --artifact-dir .goat-map-phase2\p2-04-official-app-open-attribution `
+  --report-output goat-map-p2-04-summary.json
+```
+
+Reproduction of the full request family tightly after the app-open marker would
+provide a positive signature to compare with P2-02. Absence of that family must
+still be interpreted in light of app caching, an already-active session, and
+whether the mower map view was actually initialized.
+
+The completed P2-04 positive control had a quiet 45-second baseline: none of
+the target requests or fast map/position pushes was present. The
+`official-app-open-window` began at 13:13:23.673444 UTC. The first observed app
+control request was `GetWKVer` at +3.171 seconds, followed by `getOta` at +3.184
+seconds. N-GIoT `appping` appeared at +4.769 seconds, and the broad map/control
+burst followed immediately:
+
+- five `getInfo` request/response pairs, first request at +4.852 seconds;
+- nine `getAreaSet` request/response pairs, first request at +5.146 seconds;
+- one `getMI` pair, requested at +5.264 seconds;
+- two `getMapTrack` pairs, first requested at +5.298 seconds;
+- one `getPos` pair, requested at +5.326 seconds.
+
+The same burst also included `getLifeSpan`, `getNetworkSwitch`,
+`getRelocationState`, `getScheduleLatestTask`, `getScheduleTaskInfo`,
+`getSchedules`, `getSpecialContour`, and `getVoice`. Its immediate `getMI`
+request was followed after about 500 ms by `onMI`, then two `onArI` events
+within about 527 ms. No `onAreaSet` was observed. The full 90-second window
+contained 156 `onPos`, 45 `onMapTrack`, two `onMI`, and three `onArI`. Static-map
+events and area requests used map ID `1`; position and track used map ID `0`.
+The immediate 876-byte and periodic 52-byte `onMI.info` values are byte-identical
+to the corresponding P2-01/P2-02 digests, adding a third independent capture
+without extending their interpretation.
+
+This is controlled evidence that opening the official app's mower map can
+produce the complete command family previously seen as the P2-02 confounder.
+The P2-02 concurrent burst is a close fingerprint match: eight `getInfo`, two
+`getPos`, two `getMapTrack`, two `getMI`, and eight `getAreaSet`
+request/response pairs, plus the same lifespan, OTA, schedule, and special-
+contour families. Counts vary, but both are dense multi-command initialization
+bursts. P2-02 remains classified `concurrent-external` because its exact client
+was not observed directly; the positive control now makes an official-app
+session from another household user a strong source hypothesis. The controlled
+F5 test did not reproduce this fingerprint.
+
+#### Read-only `onMI.info` representation inspection
+
+`scripts/goat_map_blob_inspect.py` reads and digest-verifies existing artifact
+blobs without modifying them. It reports byte length, unique-byte count,
+Shannon entropy, ASCII/UTF-8 printability, hex/Base64 character coverage, strict
+text-encoding candidates, leading bytes and known compression signatures after
+an exact-round-trip text layer, plus pairwise prefix/suffix and length
+differences. Syntax matches are explicitly not map decoding.
+
+Inspection of both P2-01 and P2-02 reproduces the same two `onMI.info` digests.
+The 52-byte and 876-byte originals are both printable ASCII and strict Base64
+with exact round-trip. Removing only that proven representation layer yields
+38 and 657 bytes respectively. Their decoded leading bytes are
+`5d00000400190000` and `5d00000400dc0600`; neither raw nor Base64-derived bytes
+match the currently checked gzip, zlib, bzip2, xz, ZIP, Zstandard, or LZ4 frame
+signatures. Original-byte Shannon entropy is approximately 4.423 and 5.939 bits
+per byte. The original representations share six leading bytes and no suffix;
+after the strict Base64 layer they share five leading bytes and one trailing
+byte, with the first difference at offset five. This is structural evidence
+only. No field meaning, framing, geometry, or decoded-map claim follows from it.
+
+Read-only command:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_blob_inspect.py `
+  --artifact-dir .goat-map-phase2\p2-01-getmi-paired-mowing
+```
+
+#### Proven representation layer and golden forms
+
+`deebot_client.diagnostics.goat_map_representation` now contains the only
+decode operation justified by the captures: strict, canonical Base64 removal
+for `onMI.info`. It rejects empty, non-ASCII, malformed, non-canonical, or
+incorrectly padded input. Its result is uninterpreted bytes. The helper retains
+the original text, the SHA-256 of that original representation, the derived
+bytes, and a separate SHA-256 of those bytes. This is **representation
+decoding**, not map decoding.
+
+The two stable captured forms are checked in as golden fixtures after the data
+owner explicitly confirmed that this dataset does not contain map geometry
+requiring privacy protection. The fixture contains only the opaque `onMI.info`
+representations, their observed `infoSize`, lengths, labels, and digests; it
+contains no account/device identity, credentials, token, request ID, or MQTT
+topic. Strict Base64 produces these byte-identical forms:
+
+- periodic: 52 representation bytes -> 38 opaque bytes;
+- immediate: 876 representation bytes -> 657 opaque bytes.
+
+Tests verify exact round-trip, both original and derived digests, and explicit
+rejection of invalid or non-canonical Base64.
+
+#### Framing research without semantic interpretation
+
+`scripts/goat_map_framing_inspect.py` performs a deterministic, read-only
+comparison of the golden pair. It does not implement a framing parser. Current
+observations are:
+
+- decoded bytes 0 through 4 are identical; the first difference is offset 5;
+- offsets 5 through 6 are `19 00` and `dc 06`; interpreted as little-endian
+  unsigned 16-bit values they are 25 (`0x0019`) and 1756 (`0x06dc`);
+- those values exactly equal the independently captured envelope `infoSize`
+  values in both samples;
+- a little-endian 32-bit read at the same offset yields the same values because
+  bytes 7 and 8 are zero in both samples, so the field width remains ambiguous;
+- neither candidate equals the decoded totals (38/657) or remaining decoded
+  bytes after the candidate field (31/650); the short sample's value 25 also
+  happens to equal `decoded_length - 13`, but the long sample disproves that as
+  a general length relation;
+- bytes 7 through 20 are identical; within the 38-byte overlap, the other
+  differing range is offsets 21 through 37;
+- both forms end in `00`, but this single common trailing byte is only a
+  terminator/padding/checksum candidate;
+- none of sum, XOR, CRC-32, or Adler-32 matches the trailing 1-, 2-, or 4-byte
+  values under the tested byte orders;
+- aligned fixed-width blocks of 4, 8, or 16 bytes do not repeat, and 2-byte
+  repetition is sparse; no simple periodic record structure is evident;
+- overlapping four-byte windows at offsets 9, 10, 12, 13, and 16 can be read
+  as finite, moderately sized floats in at least one byte order. Their bytes
+  are shared by both forms, but no field boundary, alignment, unit, or meaning
+  has been established. They are not described as coordinates.
+
+The `infoSize` correlation proves the start of one metadata-bearing field at
+offset 5, but not its width or payload purpose. No second field boundary is yet
+proved, so a general framing parser would be premature.
+
+Read-only framing command:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_framing_inspect.py
+```
+
+#### Historical P2-05 controlled map-delta plan
+
+This subsection records design history only. No No-Entry Zone was created or
+attempted during P2-05, P2-06, or P2-07. Before execution, the operator
+deliberately selected **Sone med redusert unnvikelse** as the controlled change
+because it was simple and reversible without ending the mowing task, docking
+the mower, or physically remote-driving a new boundary. The paragraphs below
+must not be read as an execution log.
+
+The preferred first geometry-changing control is one temporary no-go/exclusion
+zone at the minimum size allowed by the official app, placed wholly inside a
+large, open, already mapped lawn area. This has better diagnostic value than a
+name or mowing-setting change because it should produce one localized geometry
+delta, while being safer and easier to reverse than moving the outer boundary
+or expanding the mowable area. It must not overlap the boundary, dock, guide
+path, an existing exclusion, or a narrow transit route.
+
+The mower should be paused for the edit itself. Before and after datasets must
+otherwise use the same mower, map, normal-MQ passive capture, active-mowing
+state, app map-init procedure, observation durations, and capture software.
+After adding the zone, restore active mowing and wait for state stabilization
+before the after-capture. Do not delete the zone until that capture is complete;
+then remove it as a separate cleanup action, not as part of the measured delta.
+The capture sequence is:
+
+1. Capture one complete official-app map initialization before the edit,
+   preserving `getMI`, `onMI`, `onArI`, `getAreaSet`, and `onAreaSet` if seen.
+2. Record the trigger timestamp, pause the mower, and add exactly one minimum-
+   size internal exclusion zone. Make no other map or mower-setting change.
+3. Resume mowing, confirm the same state and map, then capture the identical app
+   initialization sequence after the edit.
+4. Compare records by command, role, map ID, timing, original/derived digest,
+   length, common prefix/suffix, and differing byte ranges. Preserve all opaque
+   bytes; do not infer geometry solely from a changed offset.
+5. Revert the exclusion only after the paired artifact is complete and retain
+   the revert as operational metadata outside the measured before/after pair.
+
+A non-geometric area rename was retained as a fallback because it might only
+alter UI metadata or `getAreaSet`. This design predates the completed P2-05
+run. It was superseded before execution by the deliberately selected
+reduced-avoidance control described below; it does not describe an attempted
+No-Entry Zone operation.
+
+#### P2-05 controlled reduced-avoidance-zone delta procedure
+
+P2-05, P2-06, and P2-07 exclusively tested one official-app feature labelled
+**Sone med redusert unnvikelse** (reduced-avoidance zone). No No-Entry Zone was
+created or attempted. This was a deliberate low-impact choice, not a fallback
+after a failed No-Entry Zone action. Existing artifact/report filenames retain
+the earlier `controlled-nogo-delta` planning label only as immutable run
+identifiers; they must not be used as the experiment classification.
+
+The implemented P2-05 procedure uses three independent artifacts. The before
+and after captures both use the unchanged paired legacy/N-GIoT `getMI` method.
+The intervening edit capture is passive normal MQ: it sends no diagnostic
+`appping`, `getMI`, or other device command. Its artifact window is labelled
+`controlled-map-edit`, and the sanitized report retains exact window-start,
+operator save/confirm, and window-end timestamps.
+
+The edit artifact byte-preserves only an explicit map-command allowlist:
+`getMI`, `onMI`, `onArI`, `getAreaSet`, `onAreaSet`, `getMapState`,
+`onMapState`, `getMapTrack`, `onMapTrack`, and `setAreaSet`. All MQTT command
+names and timing remain visible in the sanitized report even if an observed
+write command is not yet in that blob allowlist. This permits command discovery
+without retaining arbitrary MQTT payloads.
+
+With the mower actively mowing and the official app closed, run the before
+capture:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode paired-get-mi `
+  --country NO `
+  --phase p2-05-controlled-nogo-delta-before `
+  --mower-state mowing `
+  --device-class 2i0fns `
+  --baseline-seconds 30 `
+  --live-confirmation-timeout 30 `
+  --post-get-mi-seconds 45 `
+  --cooldown-seconds 30 `
+  --tail-seconds 30 `
+  --artifact-dir .goat-map-phase2\p2-05-controlled-nogo-delta-before `
+  --report-output goat-map-p2-05-before-summary.json
+```
+
+After it completes, pause the mower and keep the app closed. Start the separate
+edit capture:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode controlled-map-edit `
+  --country NO `
+  --phase p2-05-controlled-nogo-delta-edit `
+  --mower-state paused `
+  --device-class 2i0fns `
+  --baseline-seconds 30 `
+  --post-save-seconds 90 `
+  --artifact-dir .goat-map-phase2\p2-05-controlled-nogo-delta-edit `
+  --report-output goat-map-p2-05-edit-summary.json
+```
+
+At the first prompt, the mower was verified paused before opening the official
+app. The operator then deliberately created exactly one minimum-size **Sone med
+redusert unnvikelse** in the preselected safe lawn area, with no other map
+change. The No-Entry Zone workflow was not entered. The second Enter retained
+the operator's save/confirm context; the network timestamps remain
+authoritative. The tool then observed 90 seconds after that marker.
+
+When the edit capture completes, close the app, resume mowing, and physically
+confirm that mowing has stabilized. Run the matching after capture:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode paired-get-mi `
+  --country NO `
+  --phase p2-05-controlled-nogo-delta-after `
+  --mower-state mowing `
+  --device-class 2i0fns `
+  --baseline-seconds 30 `
+  --live-confirmation-timeout 30 `
+  --post-get-mi-seconds 45 `
+  --cooldown-seconds 30 `
+  --tail-seconds 30 `
+  --artifact-dir .goat-map-phase2\p2-05-controlled-nogo-delta-after `
+  --report-output goat-map-p2-05-after-summary.json
+```
+
+Finally, compare only the before and after artifacts. The edit artifact is not
+an input to this delta:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_delta.py `
+  --before-artifact .goat-map-phase2\p2-05-controlled-nogo-delta-before `
+  --after-artifact .goat-map-phase2\p2-05-controlled-nogo-delta-after `
+  --output goat-map-p2-05-controlled-nogo-delta.json
+```
+
+The reader is fail-closed: it verifies schema, anonymous capture ID, canonical
+blob paths, record count, blob length, and SHA-256 before comparison. Groups are
+matched by command, direction, transport, map ID, source path, and original
+representation kind. Identical digests are matched first. A changed pair is
+only inferred when byte length uniquely identifies one variant on each side,
+or exactly one unmatched variant remains on each side; ambiguous variants stay
+explicitly unpaired.
+
+For each paired variant the report contains original SHA-256/length/count,
+first and last differing start-aligned offset, differing-byte count, common
+prefix/suffix, and length change. If both original string representations pass
+strict canonical Base64, the same metrics and separate SHA-256 values are
+reported for the derived bytes. `mid`/`mapId`, `aid`, `type`, and `infoSize` are
+reported in a separate selected-field comparison. No changed byte range is
+assigned geometry or map semantics.
+
+Stop after verifying this delta report. Keep the temporary reduced-avoidance
+zone through P2-06 so its deletion can serve as the controlled inverse
+operation.
+
+The completed run found byte-stable `onMI.info` before/after and byte-stable
+`getAreaSet` `ar`/`vw` responses throughout the edit window. These remain
+negative observations. `onArI.info` differed before/after, but the before
+capture was internally unstable and the eventual after variants were already
+observed during app initialization before the controlled write. The `onArI`
+delta is therefore not attributed to the reduced-avoidance-zone change.
+
+The network sequence most tightly correlated with creation was
+`setSpecialContour`, followed by `onSpecialContour`, `onMI`/`onArI`, and
+`getSpecialContour`/other refresh traffic. The manual save marker occurred
+about 6.6 seconds after the request; network timestamps are authoritative and
+the manual marker is operator context only. P2-05 did not byte-preserve the
+`SpecialContour` family, so it supports create/delete envelope and timing
+comparison but cannot provide a raw create-payload byte comparison.
+
+#### P2-06 controlled inverse SpecialContour deletion
+
+P2-06 preserves `setSpecialContour`, `getSpecialContour`, and
+`onSpecialContour` opaque segments byte-for-byte under the existing fail-closed
+security policy. The broader known map allowlist is also active so immediate
+refresh events remain available, while every MQTT command name/timestamp stays
+visible in the sanitized report. No payload interpretation is performed.
+
+The experiment refuses to offer the deletion prompt until it observes an
+actual `getSpecialContour` response after the official app map is opened. That
+response is retained in `zone-present-readback`. At the first observed
+`setSpecialContour` request, the MQTT observer records the authoritative
+network timestamp and moves subsequent payloads into `post-delete-readback`.
+The operator's later Enter/save marker cannot change this boundary.
+
+With the reduced-avoidance zone still present, pause the mower, close the app,
+and run:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode controlled-special-contour-delete `
+  --country NO `
+  --phase p2-06-controlled-special-contour-delete `
+  --mower-state paused `
+  --device-class 2i0fns `
+  --baseline-seconds 30 `
+  --initial-readback-timeout 60 `
+  --post-delete-seconds 120 `
+  --artifact-dir .goat-map-phase2\p2-06-controlled-special-contour-delete `
+  --report-output goat-map-p2-06-special-contour-delete-summary.json
+```
+
+At the first prompt, press Enter and open the mower map in the official app,
+but do not delete anything. Wait for the console to print
+`ZONE-PRESENT SPECIALCONTOUR READBACK OBSERVED`. Only then delete the same
+reduced-avoidance zone created in P2-05, make no other change, and press Enter
+after the app reports save/confirm completion. The tool continues passively for
+120 seconds. If the initial readback times out, do not delete the zone; rerun
+with a new `-retry1` artifact directory.
+
+After a successful capture, compare the present and post-delete readback
+windows without modifying the artifact:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_special_contour_delta.py `
+  --artifact .goat-map-phase2\p2-06-controlled-special-contour-delete `
+  --output goat-map-p2-06-special-contour-delta.json
+```
+
+The report groups by command, direction, transport, map ID, source path, and
+original representation kind. It reports lengths/digests and byte differences
+for unambiguous pairs. Strict canonical Base64 is removed only when both values
+prove that representation by exact round-trip; derived-byte digests and
+offsets remain non-semantic. P2-05 and P2-06 sanitized summaries provide the
+create/delete command-envelope and timing comparison, while P2-06 alone
+provides byte-preserved present/delete readbacks. One cycle is insufficient for
+a `SpecialContour` parser.
+
+##### Aborted first P2-06 attempt and recovery
+
+The first deletion attempt observed a zone-present `getSpecialContour`
+response at `2026-08-22T16:57:25.126203+00:00`, after which the operator deleted
+the intended reduced-avoidance zone. The capture writer then rejected a known
+map/subset field named `mssid` because the earlier broad secret-key check
+mistook the `ssid` substring for a Wi-Fi SSID. The writer remained fail-closed,
+published neither artifact nor sanitized report, and the in-memory opaque
+zone-present/delete data cannot be recovered from the terminal output. This
+attempt is therefore an aborted capture, not inverse-delta evidence.
+
+Existing map command code already treats `mssid` as a map subset identifier.
+The capture policy now allows exactly `mssid`, while actual network identity
+keys `ssid`, `bssid`, and `essid` remain fail-closed. The MQTT capture observer
+also reports only the first rejection rather than logging the same follow-on
+failure for every subsequent allowlisted message.
+
+Because the zone was deleted during the aborted attempt, the controlled
+recovery is a fresh symmetric cycle: capture creation of exactly one new
+minimum-size **Sone med redusert unnvikelse**, then capture deletion of that same
+zone using a new `-retry1` artifact. The creation artifact preserves the absent
+readback, create request/event, and subsequent present readback when observed;
+the deletion artifact preserves the present readback, inverse request/event,
+and subsequent absent readback. No data from the aborted in-memory attempt is
+treated as byte-level evidence.
+
+##### Completed retry and required passive absent-state readback
+
+The recovery create capture observed two `onSpecialContour` events immediately
+before the operator marker. Their `info` representations were 92 and 88 bytes;
+both passed strict Base64 validation and produced 67 and 65 representation-
+decoded bytes respectively. They were structurally different and are not
+treated as one stable create representation.
+
+The retry deletion capture observed the same 88-byte `onSpecialContour.info`
+digest three times during app initialization, establishing a stable pre-delete
+representation for that window. The controlled deletion was temporally
+correlated with an `onSpecialContour` event at
+`2026-08-22T17:11:45.650459+00:00`; the operator marker followed about 1.862
+seconds later. In that event, the observed representations for `info`, `batid`,
+and `update` were empty and the observed `infoSize` value was `0`. These are
+structural observations only; no field semantics are assigned. `onMI` and
+`onArI` followed about 138--139 ms later.
+
+No `setSpecialContour` request was visible on the diagnostic normal-MQ session,
+and no post-delete `getSpecialContour` readback was observed. The original
+retry delta therefore had an empty `post-delete-readback` side. It has been
+regenerated with `comparison_status=incomplete`,
+`comparison_result=not_comparable`, `missing_roles=["after"]`, no ordinary
+comparison groups, and no `changed_group_count`. Its one-sided variants are
+retained only as presence/absence observations and are not byte-delta evidence.
+
+The next capture is read-only. It sends no diagnostic device-control command;
+opening the official Ecovacs map is only an external trigger. With the app
+closed and the mower's actual state supplied explicitly, run:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode zone-absent-readback `
+  --country NO `
+  --phase p2-07-zone-absent-readback `
+  --mower-state paused `
+  --device-class 2i0fns `
+  --baseline-seconds 30 `
+  --readback-seconds 120 `
+  --artifact-dir .goat-map-phase2\p2-07-zone-absent-readback `
+  --report-output goat-map-p2-07-zone-absent-summary.json
+```
+
+At the prompt, open the official app directly to the same mower map and make no
+map change. After capture, compare the stable pre-delete and passive absent
+readbacks with:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_special_contour_delta.py `
+  --artifact .goat-map-phase2\p2-06-controlled-special-contour-delete-retry1 `
+  --absent-artifact .goat-map-phase2\p2-07-zone-absent-readback `
+  --output goat-map-p2-07-present-to-absent-delta.json
+```
+
+Only a non-empty, complete comparison may report ordinary changed groups. A
+one-sided record remains a separate presence/absence observation with
+`byte_delta_proven=false`.
+
+##### P2-07 conclusion and selected-field reporting
+
+The passive P2-07 capture observed three `SpecialContour` readbacks between
+`2026-08-22T17:55:16.950215+00:00` and
+`2026-08-22T17:55:18.972675+00:00`. Together with the stable pre-delete
+representation and the empty deletion event, this completes the structural
+sequence:
+
+`present-state -> empty delete-event -> persistent absent-state`
+
+This is strong presence/absence evidence for the single **Sone med redusert
+unnvikelse** used in P2-05/P2-06. It is not a present-byte to absent-byte delta:
+the absent state is represented by absence of the former opaque value rather
+than a paired replacement blob. It does not justify a `SpecialContour` parser,
+and the zone must not be recreated for further format inference.
+
+Selected scalar fields are now classified independently from blob-group
+changes. The possible statuses are `identical`, `occurrence-count-changed`,
+`value-changed`, `before-only`, and `after-only`. In the regenerated P2-07
+report, `mid="1"` and `type=0` have identical value sets but occur twice in the
+pre-delete artifact and three times in the passive absent-state artifact. Both
+are therefore `occurrence-count-changed`, not value changes. This changes only
+derived analysis output; no capture artifact was modified.
+
+#### Deferred candidate: true No-Entry Zone discovery
+
+Official GOAT documentation distinguishes a **No-Entry Zone** from the
+reduced-avoidance feature used in P2-05. The official O-series instructions
+define it as a zone GOAT will not enter and instruct the operator to create it
+from map editing by remotely driving GOAT around a closed boundary and back to
+the starting point. The O800/O1200 RTK documentation also identifies pools,
+flowerbeds, vegetable plots, exposed wires, and similar protected areas as
+appropriate uses. If a later experiment specifically needs a true exclusion
+zone, this is the concrete app function to use; a generic special-contour or
+reduced-avoidance action is not an equivalent substitute.
+
+Primary references:
+
+- [GOAT O800/O1200 RTK installation manual](https://site-static.ecovacs.com/upload/global/file/product_manual_edit/2026/04/04/053505_1093%24GOATO800RTKO1200RTKInstallationManualpdf.pdf), section 4.3;
+- [GOAT O1200 LiDAR Pro instruction manual](https://site-static.ecovacs.com/upload/file/support/2026/01/26/051846_4011%24GOATO1200LiDARPROInstructionManual-UK.pdf), section 4.2.2;
+- [official O800 RTK No-Entry Zone FAQ](https://help.ecovacs.com/global/support/goat-o800-rtk-white/faq-detail?id=2137&product_id=121).
+
+This experiment is deferred and is not an automatic or mandatory next step. It
+requires ending or interrupting the current task, positioning the mower, and
+physically remote-driving a closed boundary. Its extra operator cost is
+justified only if discovering the exclusion-zone command family or correlating
+a controlled exclusion geometry would answer a remaining question that cannot
+be resolved from lower-impact captures.
+
+If it is selected later, the exact localized label must first be confirmed in
+the installed app. The required function is the one whose help text says GOAT
+will not enter the area and whose workflow requires closing a physically driven
+boundary. A label such as **Sone med redusert unnvikelse** does not meet that
+criterion.
+
+Any later true No-Entry Zone test should initially be a decoder-free, passive
+discovery capture. Passive means the diagnostic sends no device-control
+command; the official app remains the external source of the remote-driving and
+save actions. The proposed windows are:
+
+1. Record 30--45 seconds with the app closed and the stationary mower's actual
+   state recorded.
+2. Mark app/map-edit initialization separately, before selecting No-Entry Zone.
+3. Mark the physical boundary-drawing window from selecting the feature until
+   the closed loop returns to its start. Record mower state transitions and
+   app-originated motion commands separately from map writes.
+4. Create exactly one safe, minimum-compliant closed zone and save once. Make
+   no other map or mower-setting changes. Network timestamps are authoritative;
+   operator markers provide context only.
+5. Continue passive observation for 120--180 seconds to retain post-save
+   events and app readback. Keep the new zone until capture completeness is
+   verified.
+
+The capture must discover command names without assuming a protocol family and
+byte-preserve only payloads that pass the existing bounded, fail-closed policy.
+It should cover newly observed map-related `set*` and `on*` traffic as well as
+`getAreaSet`/`onAreaSet`, `getSpecialContour`/`onSpecialContour`,
+`getMI`/`onMI`/`onArI`, and map-state calls around save. Movement-control
+traffic must be retained only as sanitized timing/context and must not be
+mistaken for the zone representation. No field meaning, encoding, or decoder
+is assumed at this stage.
+
+#### Recommended next analysis after the SpecialContour control
+
+The SpecialContour result narrows rather than expands the immediate scope:
+
+- creation and deletion were most tightly associated with the
+  `SpecialContour` command family;
+- `onMI.info` remained stable through the controlled change;
+- the observed `getAreaSet` `ar`/`vw` values also remained stable;
+- the observed `onArI` variation cannot be attributed to the controlled change;
+- the stable present representation, empty delete event, and persistent absent
+  state establish structural lifecycle evidence without a replacement
+  absent-state blob.
+
+These observations do not presently show that a true No-Entry Zone is needed
+to understand the first decode target, `onMI`/`onArI`. The most informative
+next step is therefore read-only cross-capture analysis of the data already
+collected from P2-01 through P2-07. Build an inventory by command, source path,
+representation length, SHA-256, mower state, trigger/window, and timing relative
+to `getMI` or app initialization. Use it to answer, without semantic parsing:
+
+1. whether the 52- and 876-byte `onMI.info` forms are consistently periodic
+   versus request-associated;
+2. which `onArI.info` variants recur, which `onMI` form each accompanies, and
+   whether their variation follows time, app initialization, or transport;
+3. whether `getAreaSet.subsets` values remain stable when grouped by observed
+   `mid`/`aid`/`type` and capture context;
+4. which opaque variants are stable enough to become repository-safe fixtures
+   for representation/framing research.
+
+Only if the existing corpus cannot separate those factors should a new,
+non-editing repeatability capture be considered: app closed, physically
+confirmed mowing, one presence lease, and a deterministic sequence of legacy
+and N-GIoT `getMI` calls. A true No-Entry Zone remains a later optional control
+for a distinct exclusion-geometry or protocol-family question, not the default
+next experiment.
+
+##### Completed P2-01--P2-07 cross-capture inventory
+
+`scripts/goat_map_phase2_inventory.py` implements the read-only inventory. It
+verifies each manifest, record sequence, blob path, byte length, and SHA-256
+before analysis. It reads only sanitized `window started` markers from the
+separate Phase 2 summary files; a missing marker is reported as unavailable and
+is never estimated. It emits metadata-only JSON and CSV outside the immutable
+artifact directories. No device client, control command, payload parser, or
+semantic map model is involved.
+
+The completed run covered ten artifacts spanning P2-01 through P2-07, with 293
+captured records and 1441 opaque-segment inventory rows:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_inventory.py `
+  --artifact-root .goat-map-phase2 `
+  --summary-root . `
+  --output goat-map-p2-01-07-inventory.json `
+  --inventory-csv goat-map-p2-01-07-inventory.csv
+```
+
+The two observed `onMI.info` forms are each represented by one stable original
+digest across nine captures:
+
+- The 876-byte representation, SHA-256
+  `12cbcb330c3b91334f72b41470e09361310853554f8292bc83e4dd72dfbdd5bb`,
+  occurred 15 times. The already-proven strict Base64 layer produced 657 bytes,
+  SHA-256
+  `9a023cb8ffcb8ed19c66fc08430b2069c02e5de44a1153aadb5ea0d8ca35a1e2`.
+  Every occurrence followed an observed `getMI` request by 0.059959--4.492470
+  seconds. This is consistent in the current corpus, but it does not prove a
+  semantic role.
+- The 52-byte representation, SHA-256
+  `d7d0e5374acebd6b57c06fd2b5a6a62a6136f6664845ca6e86892dab93181ba1`,
+  occurred 17 times. Strict Base64 produced 38 bytes, SHA-256
+  `d1878e21ccbdc2110e35bc2a15950c2b618f71ddbf7e1709134c6fc9502870bf`.
+  Eight within-capture intervals ranged from 58.839491 to 68.160949 seconds,
+  supporting an approximately periodic cadence in this corpus.
+
+There is one explicit counterexample to the stronger claim that the 52-byte
+form never occurs near `getMI`. In capture
+`5f2ef129fa0742208be6d0a1c58a9349`, phase
+`p2-05-controlled-nogo-delta-before`, it occurred at
+`2026-08-22T16:20:46.880322+00:00`, 9.637864 seconds after the preceding legacy
+`getMI` request at `2026-08-22T16:20:37.242458+00:00`. The next identical form
+arrived 60.063876 seconds later. This may be a periodic event that happened to
+fall shortly after the request, but the capture cannot establish that
+causality. The 52-byte role is therefore not proven.
+
+The corpus contains 47 `onArI.info` observations and 24 distinct digest/length
+variants. Every grouped observation reports its preceding `onMI`, nearest
+`getMI`, window start, and timestamps. Three cross-capture variants are stable
+enough to be fixture candidates after manual review:
+
+- 820 bytes, SHA-256
+  `1838bb93b779295729ddd47290dadf2f92f94a149eff3f292e8a37d909ed137b`,
+  six occurrences across four captures, always following the 52-byte `onMI`;
+- 1024 bytes, SHA-256
+  `5542faa1d353156ac4e123bc5bd657577b6984811dcebe22891993aee909704d`,
+  six occurrences across five captures, always following the 876-byte `onMI`;
+- 896 bytes, SHA-256
+  `f3d6a1c0f3a9d2e610d1f81c5e8ca3cb9e26942c820a76e928c45150774a8603`,
+  six occurrences across five captures, always following the 876-byte `onMI`.
+
+The remaining `onArI` variants include many single-capture/single-occurrence
+values. Recurring variants appear after both legacy and N-GIoT contexts, while
+both contexts also contain unique variants. These differences are not
+attributed to transport.
+
+Fifty-six `getAreaSet.subsets` responses were captured. For observed
+`mid="1"`, `aid="0"`:
+
+- `type="ar"`: 32 occurrences across six captures, one stable 124-byte digest
+  `72ebe704cb5890adb28ec1be05c228a6ef9addff0738df811808f671e0afd855`;
+- `type="vw"`: 24 occurrences across six captures, one stable 24-byte digest
+  `1e01a6d271fbf47823e02e56d20cdf2a8db654afb1d11f703ed3a49d255c1255`.
+
+No other `type` was observed, and neither `subsets` value is interpreted.
+
+Seven opaque values meet the inventory's fixture-candidate rule: byte-identical
+in multiple captures and more than one relevant context. They comprise the two
+`onMI.info` forms, the three recurring `onArI.info` forms above, and the stable
+`ar`/`vw` `subsets` forms. They are only `eligible-after-manual-review`; the tool
+does not add them to the repository.
+
+The corpus is sufficient for the requested non-semantic inventory and for
+selecting repeatable representation/framing fixtures. It is not sufficient to
+prove the 52-/876-byte roles or explain `onArI` variability. A controlled,
+non-editing repeatability capture is therefore justified if resolving those
+timing roles is required before framing work continues. Its purpose should be
+to place several legacy/N-GIoT `getMI` requests at known offsets relative to an
+already observed 52-byte cadence, not to make another map edit.
+
+##### P2-08 non-editing repeatability capture
+
+The implemented `repeatability` mode is independent of the deferred true
+No-Entry Zone candidate. It performs no map edit, does not open the official
+app, does not use JMQ, and retains the existing byte-preserving/fail-closed
+artifact policy. Before connecting, the operator must explicitly confirm that
+the official app is closed and the mower is physically mowing.
+
+The runner opens normal MQ and sends exactly one N-GIoT `appping`. Only 52-byte
+`onMI.info` values that pass the already-proven strict Base64 representation
+layer and yield 38 uninterpreted bytes are used for timing. The bytes are not
+semantically parsed. The runner requires two identical short representations
+45--75 seconds apart before it establishes a cadence. If that precondition is
+not met within the configured timeout, no `getMI` is sent and the capture is
+reported as `inconclusive` rather than guessing a schedule.
+
+After cadence establishment, the runner sends legacy `getMI` 20--30 seconds
+after the last observed short form, waits through the next expected cadence
+boundary, then sends N-GIoT `getMI` at the same offset after that later short
+form. It waits for one further cadence boundary. Before issuing either control,
+it verifies that the projected experiment still fits within the single,
+conservatively bounded presence lease; it never renews `appping` during this
+capture.
+
+The report records the exact controlled-action timestamps independently of
+whether an outbound request is visible on MQTT. Each captured `onMI`/`onArI`
+entry includes its timestamp, original representation length/digest, nearest
+preceding controlled `getMI` and transport, distance to that control, nearest
+expected cadence boundary, and preceding `onMI` context. Classification happens
+only after artifact finalization and is one of `control-associated`,
+`cadence-associated`, `ambiguous-overlap`, or `unclassified`. It is timing-only
+metadata and does not alter opaque payloads.
+
+H1--H4 are reported with supporting timestamps/digests and explicit
+counterexamples. A result can be `supported-in-this-capture`, but
+`role_proven` remains false; any counterexample produces
+`counterexample-observed`. The seven inventory candidates remain
+`eligible-after-manual-review`, and P2-08 adds no opaque fixture bytes to the
+repository.
+
+Run the experiment only while the mower is continuously and physically mowing:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode repeatability `
+  --country NO `
+  --phase p2-08-repeatability `
+  --mower-state mowing `
+  --device-class 2i0fns `
+  --baseline-seconds 30 `
+  --cadence-timeout-seconds 150 `
+  --control-offset-seconds 25 `
+  --cadence-min-seconds 45 `
+  --cadence-max-seconds 75 `
+  --cadence-boundary-tolerance-seconds 8 `
+  --final-event-grace-seconds 3 `
+  --presence-lease-budget-seconds 285 `
+  --artifact-dir .goat-map-phase2\p2-08-repeatability `
+  --report-output goat-map-p2-08-repeatability-summary.json
+```
+
+No application or dashboard should be opened during the run. If the terminal
+reports an inconclusive precondition, retain that artifact and use a new
+`-retry1` directory for any retry.
+
+###### Completed P2-08 result
+
+Capture `35d1313e9d0241a1b773f9f526276eb1` completed under operator-confirmed
+`mowing` with a measured 52-form cadence of `60.01633050000237` seconds. The
+single N-GIoT `appping` began at `2026-08-22T18:54:41.028167+00:00` and returned
+at `2026-08-22T18:55:01.294664+00:00`. The cadence-establishing 52-byte
+representations had the known digest
+`d7d0e5374acebd6b57c06fd2b5a6a62a6136f6664845ca6e86892dab93181ba1`
+at `18:55:20.253107` and `18:56:20.268637` UTC.
+
+The legacy control started at `18:56:45.272766` UTC, 25.004 seconds after the
+cadence anchor. The known 876-byte representation
+`12cbcb330c3b91334f72b41470e09361310853554f8292bc83e4dd72dfbdd5bb`
+arrived 0.278080 seconds later. The next 52-byte event arrived at
+`18:57:20.188403`, 59.919766 seconds after its preceding identical form and
+0.096696 seconds before the predicted boundary. The N-GIoT control then began
+at `18:57:45.199679`, again about 25 seconds after the short form; the same
+876-byte representation arrived 0.216537 seconds later. A further 52-byte event
+arrived at `18:58:20.443485`, 60.255082 seconds after the preceding identical
+form and 0.142056 seconds after the predicted boundary.
+
+The initial generated report incorrectly labelled that final boundary as a
+counterexample to H2/H3. Repeated addition of the fractional cadence rounded
+the second boundary to `...301430`, while per-event classification calculated
+the mathematically equivalent boundary as `...301429`; exact timestamp-string
+matching then failed. The analysis now derives every boundary directly as
+`anchor + n * cadence`, with a regression test using the observed fractional
+cadence. Read-only reanalysis of the unchanged artifact gives:
+
+- H1: `supported-in-this-capture`;
+- H2: `supported-in-this-capture`;
+- H3: `supported-in-this-capture`;
+- H4: `inconclusive`.
+
+H1--H3 remain timing-supported hypotheses, not proven representation roles.
+The result supplies no counterexample to the natural cadence: both explicitly
+scheduled controls produced the 876 form promptly, and neither reset or shifted
+the next 52 form outside the observed tolerance. It also provides a plausible
+explanation for P2-05's 52-byte event shortly after `getMI`: a control and the
+independent cadence can occur near each other, although P2-05 alone cannot
+establish that attribution.
+
+H4 is genuinely inconclusive rather than a timing-analysis error. None of the
+three earlier exact `onArI` fixture-candidate digests appeared. P2-08 instead
+observed these opaque families without interpreting their contents:
+
+- one 780-byte value following a 52-byte `onMI` during the pre-presence
+  baseline;
+- one 796-byte digest repeated four times, each immediately following the
+  52-byte form;
+- one 1024-byte digest repeated after both legacy- and N-GIoT-associated
+  876-byte forms;
+- one 872-byte digest repeated after both legacy- and N-GIoT-associated
+  876-byte forms.
+
+The identical 1024/872 pair under both control transports supports transport
+independence for that P2-08 response family. The absence of the earlier
+820/1024/896 fixture-candidate digests means their proposed cross-context role
+cannot be confirmed by this capture, and the new lengths show that fixed
+`onArI` lengths must not be treated as universal roles. No new opaque value is
+promoted to a fixture without a separate manual review.
+
+After review, H1--H3 are accepted as supported protocol behavior for continued
+research. The only permitted role labels are therefore:
+
+- 876-byte `onMI.info`: **request-associated form**;
+- 52-byte `onMI.info`: **cadence-associated form**;
+- in the controlled P2-08 run, explicit `getMI` did not reset the established
+  approximately 60-second cadence.
+
+These labels describe timing/transport association only. They do not mean full
+map, metadata, geometry, boundary, or any other semantic map concept. H4
+remains `inconclusive`, and no `onArI.info` length is a universal role.
+
+###### Corrected P2-08 provenance
+
+The initial `goat-map-p2-08-repeatability-summary.json` is explicitly
+superseded because its unversioned timing analysis produced the one-microsecond
+false boundary mismatch described above. It is retained only as historical run
+output and is not an authoritative hypothesis report.
+
+`scripts/goat_map_repeatability_reanalyze.py` verifies the immutable artifact,
+uses sanitized controlled-action markers from the old summary, converts the
+observed cadence once to integer microseconds, and calculates every boundary as
+`anchor + integer_index * cadence_microseconds`. It writes a separate corrected
+report containing the capture ID, phase, manifest SHA-256, records SHA-256,
+analysis version, old/new hypothesis statuses, and the explicit supersession
+reason. It never writes inside the artifact:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_repeatability_reanalyze.py `
+  --artifact .goat-map-phase2\p2-08-repeatability `
+  --superseded-report goat-map-p2-08-repeatability-summary.json `
+  --output goat-map-p2-08-repeatability-corrected.json
+```
+
+The generated report references capture
+`35d1313e9d0241a1b773f9f526276eb1`, uses analysis version
+`goat-repeatability-timing/v2`, and records H1/H2/H3 as
+`supported-in-this-capture` and H4 as `inconclusive`. The referenced artifact's
+manifest and records digests are respectively
+`90d74271bf26389a5289ed0fa81b3fb638fac24bd4e96549af38563735f0c74e`
+and `d6aeb4440b9eee670c88c9c4ac22fadf70e57466598b953285cb4316761bd262`.
+The artifact was not modified.
+
+##### P2-01--P2-08 onArI burst/framing inventory
+
+`scripts/goat_map_on_ari_analyze.py` performs the approved read-only structural
+analysis across all eleven artifact directories whose phases begin P2-01
+through P2-08. A burst is only a deterministic proximity group: consecutive
+`onArI` events no more than 250,000 microseconds apart. It is not a logical
+record, chunk group, or reconstruction.
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_on_ari_analyze.py `
+  --artifact-root .goat-map-phase2 `
+  --output goat-map-p2-01-08-onari-burst-analysis.json
+```
+
+The corpus contains 56 `onArI.info` occurrences in 38 proximity bursts: 22
+single-message and 16 multi-message bursts. Every observed representation is
+ASCII, canonical strict Base64 with exact round-trip. This establishes the
+Base64 representation layer for the observed `onArI.info` corpus, but not any
+meaning for its derived bytes.
+
+All 22 cadence-associated bursts contain exactly one `onArI`. Their observed
+envelope values consistently include `serial="1"`, `index="0"`, and
+`type="-1"`. Original representation lengths range across 780, 784, 792, 796,
+800, 808, 812, 816, 820, and 840 characters; the same 840-character length even
+has two different decoded lengths (628 and 630 bytes). The recurring 820 form
+is only one member of this family, not a universal cadence-associated length.
+
+All 16 request-associated proximity bursts begin with a 1024-character
+representation that strict-Base64 decodes to exactly 768 bytes. Fifteen are
+two-message groups with observed `serial="2"`, `index="0"/"1"`, and
+`type="0"`. Within each pair, `batid`, `infoSize`, `mid`, `serial`, `type`, and
+`using` are identical while `index` changes from `0` to `1`. Field names and
+values are reported as observed; no sequence/chunk meaning is assigned.
+
+The second representation is variable. Observed two-message patterns include
+1024 plus 844, 872, 876, 888, 896, 908, or 920 Base64 characters. In particular:
+
+- P2-08 contains two `1024 + 872` bursts, decoding to `768 + 653` bytes;
+- six bursts across five earlier captures contain `1024 + 896`, decoding to
+  `768 + 672` bytes;
+- the 872 and 896 patterns have the same envelope field/status structure.
+
+For all fifteen two-message groups, concatenating the Base64 representations in
+observed order remains strict canonical Base64, and its derived bytes equal the
+ordered concatenation of the two separately derived byte strings. This is a
+structural concatenation candidate only. It is not evidence that the bytes form
+one reconstructed record.
+
+One P2-02 proximity group contains four messages with pattern
+`1024 + 888 + 1024 + 888` over 98,165 microseconds. It references two distinct
+preceding `onMI` events, `batid` changes between ordinals 2 and 3, and the
+observed index returns from `1` to `0`. The complete four-representation text is
+not strict Base64 because it contains an internal padded ending. This is an
+explicit counterexample to treating time proximity alone as a logical chunk
+boundary; the report marks the possible 2/3 boundary structurally without
+splitting or reconstructing it.
+
+Within each multi-message group, `infoSize` is stable across its messages, but
+no observed value equals either the summed Base64 representation length or the
+summed Base64-derived byte length. No individual derived value or ordered
+derived-part concatenation begins with any tested gzip, zlib, zip, bzip2, xz,
+zstd, or LZ4-frame signature. These are negative structural observations, not
+evidence against an unknown framing or encoding.
+
+Fixture assessment is now intentionally asymmetric:
+
+- the 876-byte request-associated and 52-byte cadence-associated `onMI.info`
+  values are strong golden-fixture candidates after manual review (17 and 22
+  observations respectively, each across ten captures);
+- stable `getAreaSet.subsets` `ar`/`vw` representations remain strong candidates
+  after manual review (32 and 24 observations across six captures);
+- every `onArI.info` variant remains a
+  `structural-example-only-not-canonical` candidate, regardless of recurrence.
+
+No fixture bytes were added, no artifact was changed, and no parser,
+reassembler, framing model, or semantic map decoder was implemented.
 
 ### 2.3 Decode the static map first
 

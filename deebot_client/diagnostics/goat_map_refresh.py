@@ -106,6 +106,7 @@ _SENSITIVE_KEY_PARTS = (
     "email",
     "mac",
     "password",
+    "reqid",
     "requestid",
     "secret",
     "service_id",
@@ -571,6 +572,40 @@ class MqttTrafficRecorder:
             state=state,
             transport=transport.value,
             command="appping" if state != "observation-ended" else None,
+            observed_at=observed_at,
+        )
+
+    def record_map_edit_marker(
+        self,
+        state: Literal["edit-window-started", "save-confirmed", "edit-window-ended"],
+        *,
+        observed_at: datetime | None = None,
+    ) -> None:
+        """Mark operator-controlled map-edit timing without payload data."""
+        self._append(
+            "marker",
+            "controlled-map-edit",
+            state=state,
+            observed_at=observed_at,
+        )
+
+    def record_special_contour_marker(
+        self,
+        state: Literal[
+            "zone-present-readback-observed",
+            "delete-action-armed",
+            "set-request-observed",
+            "manual-save-confirmed",
+            "observation-ended",
+        ],
+        *,
+        observed_at: datetime | None = None,
+    ) -> None:
+        """Mark SpecialContour control context while retaining network timing."""
+        self._append(
+            "marker",
+            "controlled-special-contour-delete",
+            state=state,
             observed_at=observed_at,
         )
 
@@ -1195,18 +1230,22 @@ class _SstToken:
 class NgiotControlClient:
     """Minimal N-GIoT control probe with legitimate short-lived SST auth."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         session: ClientSession,
         authenticator: Authenticator,
         device_info: ApiDeviceInfo,
         country: str,
         recorder: MqttTrafficRecorder,
+        capture_response: Callable[[ControlTransport, str, bytes], None] | None = None,
+        register_secret: Callable[[str], None] | None = None,
     ) -> None:
         self._session = session
         self._authenticator = authenticator
         self._device_info = device_info
         self._recorder = recorder
+        self._capture_response = capture_response
+        self._register_secret = register_secret
         self._endpoints = resolve_ngiot_endpoints(device_info, country)
         self._sst: _SstToken | None = None
         recorder.record_endpoint("mqs-control", self._endpoints.mqs)
@@ -1216,6 +1255,8 @@ class NgiotControlClient:
         """Send a research control request and retain only its sanitized response."""
         sst = await self._sst_token()
         request_id = uuid4().hex
+        if self._register_secret is not None:
+            self._register_secret(request_id)
         api = self._device_info
         url = f"https://{self._endpoints.mqs.host}/api/iot/endpoint/control"
         params = {
@@ -1241,7 +1282,17 @@ class NgiotControlClient:
             timeout=_HTTP_TIMEOUT,
         ) as response:
             response.raise_for_status()
-            decoded = await response.json(content_type=None)
+            if self._capture_response is None:
+                decoded = await response.json(content_type=None)
+            else:
+                raw_response = await response.read()
+                if raw_response.strip():
+                    decoded = orjson.loads(raw_response)
+                    self._capture_response(
+                        ControlTransport.NGIOT, command, raw_response
+                    )
+                else:
+                    decoded = None
         result: dict[str, Any] = decoded if isinstance(decoded, dict) else {}
         self._recorder.record_control(ControlTransport.NGIOT, command, decoded)
         return result
@@ -1282,6 +1333,8 @@ class NgiotControlClient:
         except (KeyError, TypeError) as ex:
             raise ValueError("SST issue response did not contain a token") from ex
         self._sst = _SstToken(token=token, expires_at=time.time() + 540)
+        if self._register_secret is not None:
+            self._register_secret(token)
         return self._sst
 
 

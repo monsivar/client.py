@@ -163,6 +163,7 @@ def test_sanitize_capture_retains_protocol_fields_and_masks_secrets() -> None:
     capture = {
         "token": "top-secret",
         "si": "request-id",
+        "reqid": "inner-request-id",
         "body": {
             "data": {
                 "mid": "42",
@@ -178,6 +179,7 @@ def test_sanitize_capture_retains_protocol_fields_and_masks_secrets() -> None:
 
     assert sanitized["token"] == "<redacted:str:len=10>"  # noqa: S105
     assert sanitized["si"] == "<redacted:str:len=10>"
+    assert sanitized["reqid"] == "<redacted:str:len=16>"
     data = sanitized["body"]["data"]
     assert data["mid"] == "42"
     assert data["mapId"] == "43"
@@ -563,6 +565,15 @@ def _response_context(value: Any) -> MagicMock:
     return context
 
 
+def _raw_response_context(value: bytes) -> MagicMock:
+    response = MagicMock()
+    response.read = AsyncMock(return_value=value)
+    context = MagicMock()
+    context.__aenter__ = AsyncMock(return_value=response)
+    context.__aexit__ = AsyncMock(return_value=None)
+    return context
+
+
 async def test_ngiot_control_issues_sst_and_generates_request_id(
     authenticator: Authenticator,
 ) -> None:
@@ -623,6 +634,81 @@ async def test_ngiot_control_issues_sst_and_generates_request_id(
     assert control["transport"] == "ngiot"
     assert control["mower_state"] == "mowing"
     assert control["sanitized_response"]["data"]["mid"] == "7"
+
+
+async def test_ngiot_control_forwards_wire_response_and_registers_secrets(
+    authenticator: Authenticator,
+) -> None:
+    cast("Any", authenticator).authenticate = AsyncMock(
+        return_value=_credentials_with_realm()
+    )
+    raw = b'{"code":0,"data":{"mid":"7","info":"opaque"}}\r\n'
+    session = MagicMock()
+    session.post.side_effect = [
+        _response_context({"data": {"data": {"token": "short-lived-sst"}}}),
+        _raw_response_context(raw),
+    ]
+    capture_response = MagicMock()
+    register_secret = MagicMock()
+    client = NgiotControlClient(
+        cast("ClientSession", session),
+        authenticator,
+        _device(),
+        "NO",
+        MqttTrafficRecorder(),
+        capture_response=capture_response,
+        register_secret=register_secret,
+    )
+
+    with patch(
+        "deebot_client.diagnostics.goat_map_refresh.uuid4",
+        return_value=MagicMock(hex="generated-request-id"),
+    ):
+        result = await client.call("getMI", {})
+
+    assert result["data"]["info"] == "opaque"
+    capture_response.assert_called_once_with(ControlTransport.NGIOT, "getMI", raw)
+    assert [item.args[0] for item in register_secret.call_args_list] == [
+        "short-lived-sst",
+        "generated-request-id",
+    ]
+
+
+async def test_ngiot_control_capture_accepts_empty_appping_response(
+    authenticator: Authenticator,
+) -> None:
+    cast("Any", authenticator).authenticate = AsyncMock(
+        return_value=_credentials_with_realm()
+    )
+    session = MagicMock()
+    session.post.side_effect = [
+        _response_context({"data": {"data": {"token": "short-lived-sst"}}}),
+        _raw_response_context(b"\r\n"),
+    ]
+    capture_response = MagicMock()
+    register_secret = MagicMock()
+    client = NgiotControlClient(
+        cast("ClientSession", session),
+        authenticator,
+        _device(),
+        "NO",
+        MqttTrafficRecorder(),
+        capture_response=capture_response,
+        register_secret=register_secret,
+    )
+
+    with patch(
+        "deebot_client.diagnostics.goat_map_refresh.uuid4",
+        return_value=MagicMock(hex="generated-request-id"),
+    ):
+        result = await client.call("appping", {})
+
+    assert result == {}
+    capture_response.assert_not_called()
+    assert [item.args[0] for item in register_secret.call_args_list] == [
+        "short-lived-sst",
+        "generated-request-id",
+    ]
 
 
 async def test_ngiot_control_reuses_sst_but_not_request_ids(

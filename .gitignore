@@ -36,3 +36,6 @@ similarity_output/
 
 # Local GOAT diagnostic client resource; reused for Ecovacs device verification.
 /.goat-map-refresh-state.json
+
+# Local Phase 2 captures may contain private property-map geometry.
+/.goat-map-phase2/
