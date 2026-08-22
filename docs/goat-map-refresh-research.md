@@ -1989,6 +1989,153 @@ Fixture assessment is now intentionally asymmetric:
 No fixture bytes were added, no artifact was changed, and no parser,
 reassembler, framing model, or semantic map decoder was implemented.
 
+##### P2-01--P2-08 envelope-grouped onArI framing research
+
+`scripts/goat_map_on_ari_framing_analyze.py` replaces proximity as the grouping
+basis with the approved structural identity: capture, `batid`, `serial`,
+`infoSize`, `mid`, `type`, and `using`. Each group is validated as strict
+canonical Base64, sorted by `index`, required to contain exactly
+`0..serial-1`, and assembled only as uninterpreted derived bytes. Raw `batid`
+values and complete opaque representations/derived values are not written to
+the report.
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_on_ari_framing_analyze.py `
+  --artifact-root .goat-map-phase2 `
+  --output goat-map-p2-01-08-onari-grouped-framing.json
+```
+
+The verified corpus contains 39 complete groups from eleven captures with no
+excluded group: 17 observed `serial=2` request-associated groups and 22
+observed `serial=1` cadence-associated groups. The previous P2-02
+`0/1/0/1` proximity sequence is structurally separated by its different
+`batid` values rather than treated as one four-part group.
+
+All 39 derived concatenations share exactly the first five bytes
+`5d00000400`. The first differing offset across the complete corpus is offset
+5. An unsigned little-endian reading beginning at offset 5 equals the opaque
+envelope `infoSize` value for all 39 groups, across all eleven captures, both
+serial forms, and every observed derived length. There are no counterexamples
+in this corpus. Both a two-byte and a four-byte reading support the relation
+because bytes 7 and 8 are zero for every observation. The evidence therefore
+supports the start offset and little-endian value relation, but does not yet
+distinguish a two-byte field from a wider field whose high bytes are zero. No
+parser boundary is adopted.
+
+`infoSize` remains envelope metadata and is not treated as direct byte length.
+Observed `serial=1` examples pair `infoSize` values 1250--1361 with derived
+lengths 583--630; observed `serial=2` examples pair values 6241--6382 with
+derived lengths 1401--1457. The integer scan found no supported internal field
+equal to the derived total length and no supported field equal to envelope
+`serial`. Zero-valued readings that happen to belong to the envelope index set
+are retained only as non-discriminating `candidate` results, not supported
+fields.
+
+Four same-capture legacy/N-GIoT comparisons are available. P2-02, P2-05 after,
+and P2-08 have byte-identical derived groups for their paired control
+transports. P2-01 is an explicit counterexample to universal byte identity:
+the legacy-associated group is 1401 bytes and the N-GIoT-associated group is
+1424 bytes with a different digest. All four pairs retain the common five-byte
+prefix and the offset-5/`infoSize` relation. The evidence supports a framing
+relationship stable across transport, but does not show that body contents are
+transport-determined or transport-independent in every capture.
+
+There is no common suffix across all groups. Individual trailing zero runs are
+0, 1, or 2 bytes, so padding is not yet stable. The conservative repeated-block
+scan found no candidate repeated block, and no first-64-byte position matches a
+tested gzip, zlib, zip, bzip2, xz, zstd, or LZ4-frame signature. No checksum or
+hash algorithm was tested because no concrete trailer field candidate was
+established. No codec was executed.
+
+The generated JSON contains group identity digests, context, segment/combined
+lengths and SHA-256 values, a maximum 64-byte leading hex preview, pairwise
+prefix/suffix/first-difference measurements, integer-field candidates with all
+supporting examples and counterexamples, and negative results. It contains no
+complete opaque blob. The artifacts were read through the existing verified
+read-only loader and were not modified.
+
+This documents one supported internal field-start/value relation with multiple
+independent examples, but leaves its width and the remainder of the framing
+unknown. No framing parser, semantic field model, geometry decoder, or
+production integration is implemented.
+
+##### P2-01--P2-08 cross-family common-header analysis
+
+`scripts/goat_map_common_header_analyze.py` combines every occurrence of the
+two stable `onMI.info` forms with every complete envelope-grouped `onArI`
+derived stream. It performs a 64-column byte inventory grouped by message
+family, request/cadence association, and `infoSize`, but writes no complete
+opaque value:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_common_header_analyze.py `
+  --artifact-root .goat-map-phase2 `
+  --output goat-map-p2-01-08-common-header-analysis.json
+```
+
+The verified corpus contains 78 samples from eleven captures with no excluded
+sample: 39 `onMI` occurrences and 39 complete grouped `onArI` streams. The
+`onMI` side consists only of the stable 38-derived-byte cadence-associated form
+(22 occurrences across ten captures) and stable 657-derived-byte
+request-associated form (17 occurrences across ten captures). The association
+distribution over both families is 44 cadence-associated and 34
+request-associated samples.
+
+The longest raw common prefix is five bytes, `5d00000400`, for the complete
+corpus and separately within each message family. The prefix stops at offset 5
+because `infoSize` varies both between and within the families.
+
+Both explicit little-endian hypotheses remain supported as value relations:
+
+- bytes 5--6 interpreted as unsigned 16-bit equal envelope `infoSize` in all 78
+  samples;
+- bytes 5--8 interpreted as unsigned 32-bit equal envelope `infoSize` in all 78
+  samples.
+
+They cannot be distinguished with this corpus because every observed
+`infoSize` fits in 16 bits and bytes 7--8 are zero in every sample. Under the
+16-bit hypothesis, bytes 7--8 are therefore retained as a separate unknown
+two-byte `candidate`. They are not `supported`: their only observed value is
+zero and they have no varying relation to observable metadata. Under the
+32-bit hypothesis they remain the high zero bytes of that candidate field.
+Neither interpretation is selected.
+
+After the 32-bit candidate, bytes 9--15 are invariant across all 78 samples and
+all eleven captures: `002d96c042005e`. This seven-byte run is `supported` as a
+shared structural invariant because it includes stable non-zero values and is
+not inferred from a small zero-only subset. It is not assigned a semantic name
+or consumed by a parser.
+
+Offset 16 is the first variable column after that invariant. It has a fully
+supported message-family relation with no counterexamples:
+
+- every `onMI` sample has byte `0x11`;
+- every grouped `onArI` sample has byte `0x14`.
+
+Both values are observed 39 times over the independent capture corpus. This is
+the next documented structural change after `infoSize`: a shared invariant run
+ends at offset 15 and a family-correlated byte begins at offset 16. It remains
+a field candidate, not a type parser.
+
+The clean family-only relation stops immediately after offset 16. At offset 17,
+`onMI` remains `0xd8`, while grouped `onArI` splits between `0x63` for the
+cadence-associated samples and `0xb4` for the request-associated samples. The
+family-only offset-17 candidate therefore has 17 counterexamples and is
+`rejected`. Later columns continue to vary by family/association and sometimes
+within the same metadata groups. No standalone association field is supported
+by the first 64 columns.
+
+No 16- or 32-bit integer position after offset 6 is supported as the derived
+total length. This is a negative result against a simple internal direct-length
+field in the inspected columns, not evidence that no length exists elsewhere
+or under another relation.
+
+The report includes the complete byte-column stability inventory, all
+supporting sample/capture/timestamp references, and every counterexample for
+reported candidates. Artifact hashes remain unchanged. No parser, decoder,
+geometry model, semantic field mapping, codec execution, or production
+integration was added.
+
 ### 2.3 Decode the static map first
 
 1. Compare repeated `onMI` and `onArI` captures structurally without assuming

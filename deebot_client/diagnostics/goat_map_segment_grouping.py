@@ -1,0 +1,211 @@
+"""Pure structural grouping for opaque onArI segments."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from hashlib import sha256
+
+from .goat_map_representation import (
+    RepresentationDecodeError,
+    decode_strict_base64_representation,
+)
+
+type EnvelopeValue = str | int
+
+
+class SegmentGroupingError(ValueError):
+    """Base error for invalid opaque segment-set structure."""
+
+
+class EmptySegmentGroupError(SegmentGroupingError):
+    """No segment was supplied for assembly."""
+
+
+class InvalidSegmentEnvelopeError(SegmentGroupingError):
+    """An envelope field is outside the observed structural contract."""
+
+
+class InvalidSegmentRepresentationError(SegmentGroupingError):
+    """A segment representation is not strict canonical Base64."""
+
+
+class MixedSegmentIdentityError(SegmentGroupingError):
+    """Segments passed to one assembly have different envelope identities."""
+
+
+class DuplicateSegmentIndexError(SegmentGroupingError):
+    """One envelope identity contains the same index more than once."""
+
+
+class IncompleteSegmentGroupError(SegmentGroupingError):
+    """An envelope identity does not contain exactly ``0..serial-1``."""
+
+    def __init__(
+        self, *, missing: tuple[int, ...], unexpected: tuple[int, ...]
+    ) -> None:
+        self.missing = missing
+        self.unexpected = unexpected
+        super().__init__(
+            f"Incomplete segment index set: missing={missing}, unexpected={unexpected}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OpaqueSegmentInput:
+    """One uninterpreted segment and its observed envelope identity."""
+
+    batid: str
+    serial: int
+    index: int
+    info_size: EnvelopeValue
+    mid: EnvelopeValue
+    type: EnvelopeValue
+    using: EnvelopeValue
+    representation: str
+
+
+@dataclass(frozen=True, slots=True)
+class OpaqueSegmentSetIdentity:
+    """Envelope fields that identify one observed segment set."""
+
+    batid: str
+    serial: int
+    info_size: EnvelopeValue
+    mid: EnvelopeValue
+    type: EnvelopeValue
+    using: EnvelopeValue
+
+
+@dataclass(frozen=True, slots=True)
+class PreservedOpaqueSegment:
+    """Original representation and separately derived uninterpreted bytes."""
+
+    index: int
+    original_representation: str
+    original_representation_length: int
+    original_representation_sha256: str
+    derived_bytes: bytes
+    derived_byte_length: int
+    derived_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class OpaqueSegmentSet:
+    """A complete, index-ordered opaque segment assembly."""
+
+    identity: OpaqueSegmentSetIdentity
+    segments: tuple[PreservedOpaqueSegment, ...]
+    derived_concatenation: bytes
+    derived_concatenation_length: int
+    derived_concatenation_sha256: str
+
+
+def assemble_opaque_segment_set(
+    segments: list[OpaqueSegmentInput] | tuple[OpaqueSegmentInput, ...],
+) -> OpaqueSegmentSet:
+    """Validate and assemble exactly one complete envelope identity."""
+    if not segments:
+        raise EmptySegmentGroupError("At least one segment is required")
+
+    first_identity = _identity(segments[0])
+    preserved_by_index: dict[int, PreservedOpaqueSegment] = {}
+    for segment in segments:
+        identity = _identity(segment)
+        if identity != first_identity:
+            raise MixedSegmentIdentityError(
+                "One assembly cannot mix batid, serial, infoSize, mid, type, or using"
+            )
+        _validate_index(segment.index)
+        if segment.index in preserved_by_index:
+            message = (
+                f"Duplicate segment index {segment.index} for one envelope identity"
+            )
+            raise DuplicateSegmentIndexError(message)
+        preserved_by_index[segment.index] = _preserve_segment(segment)
+
+    expected = set(range(first_identity.serial))
+    observed = set(preserved_by_index)
+    if observed != expected:
+        raise IncompleteSegmentGroupError(
+            missing=tuple(sorted(expected - observed)),
+            unexpected=tuple(sorted(observed - expected)),
+        )
+
+    preserved = tuple(
+        preserved_by_index[index] for index in range(first_identity.serial)
+    )
+    concatenation = b"".join(segment.derived_bytes for segment in preserved)
+    return OpaqueSegmentSet(
+        identity=first_identity,
+        segments=preserved,
+        derived_concatenation=concatenation,
+        derived_concatenation_length=len(concatenation),
+        derived_concatenation_sha256=sha256(concatenation).hexdigest(),
+    )
+
+
+def group_opaque_segment_sets(
+    segments: list[OpaqueSegmentInput] | tuple[OpaqueSegmentInput, ...],
+) -> tuple[OpaqueSegmentSet, ...]:
+    """Partition by full envelope identity and assemble each complete set."""
+    grouped: dict[OpaqueSegmentSetIdentity, list[OpaqueSegmentInput]] = {}
+    for segment in segments:
+        grouped.setdefault(_identity(segment), []).append(segment)
+    return tuple(assemble_opaque_segment_set(group) for group in grouped.values())
+
+
+def _identity(segment: OpaqueSegmentInput) -> OpaqueSegmentSetIdentity:
+    _validate_batid(segment.batid)
+    _validate_positive_integer("serial", segment.serial)
+    _validate_envelope_value("infoSize", segment.info_size)
+    _validate_envelope_value("mid", segment.mid)
+    _validate_envelope_value("type", segment.type)
+    _validate_envelope_value("using", segment.using)
+    return OpaqueSegmentSetIdentity(
+        batid=segment.batid,
+        serial=segment.serial,
+        info_size=segment.info_size,
+        mid=segment.mid,
+        type=segment.type,
+        using=segment.using,
+    )
+
+
+def _preserve_segment(segment: OpaqueSegmentInput) -> PreservedOpaqueSegment:
+    try:
+        derived = decode_strict_base64_representation(segment.representation)
+    except RepresentationDecodeError as err:
+        message = f"Segment index {segment.index} is not strict canonical Base64"
+        raise InvalidSegmentRepresentationError(message) from err
+    original = segment.representation.encode("ascii")
+    return PreservedOpaqueSegment(
+        index=segment.index,
+        original_representation=segment.representation,
+        original_representation_length=len(original),
+        original_representation_sha256=sha256(original).hexdigest(),
+        derived_bytes=derived,
+        derived_byte_length=len(derived),
+        derived_sha256=sha256(derived).hexdigest(),
+    )
+
+
+def _validate_batid(value: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise InvalidSegmentEnvelopeError("batid must be a non-empty string")
+
+
+def _validate_positive_integer(name: str, value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        message = f"{name} must be a positive integer"
+        raise InvalidSegmentEnvelopeError(message)
+
+
+def _validate_index(value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise InvalidSegmentEnvelopeError("index must be a non-negative integer")
+
+
+def _validate_envelope_value(name: str, value: EnvelopeValue) -> None:
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        message = f"{name} must be an opaque string or integer"
+        raise InvalidSegmentEnvelopeError(message)
