@@ -2243,6 +2243,79 @@ later remain opaque, and variation at offset 34 does not affect context
 classification. No timing input, parser, decoder, map model, or production
 integration is involved.
 
+##### P2-01--P2-08 exact-signature offset-34+ analysis
+
+`scripts/goat_map_body_structure_analyze.py` performs read-only research on
+the opaque remainder from absolute offset 34. It groups by the exact raw
+17-byte signature first; it never combines the two `observed-onMI` signatures
+just because they share one structural class:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_body_structure_analyze.py `
+  --artifact-root .goat-map-phase2 `
+  --output goat-map-p2-01-08-body-structure-analysis.json
+```
+
+The verified corpus contains 78 samples from eleven captures and four exact
+signature groups, with no excluded sample. SHA-256 inventories of all 364
+artifact files were identical before and after both report generations. The
+generated JSON report is local analysis output, not a repository fixture.
+
+The two exact `onMI` groups are the strongest repeatability observations:
+
+- signature `d87941b0124e4b661976770c2fe196de4f` has a four-byte remainder;
+  all 22 samples across ten captures are byte-identical;
+- signature `d87941b05cc7ff714f1e78d8dc93bd81d1` has a 623-byte remainder;
+  all 17 samples across ten captures are byte-identical.
+
+Both exact-remainder relations are `supported`. They do not establish another
+internal field boundary: there is no variation inside either group from which
+to locate one. The two raw signatures and their remainders remain separate
+despite both signatures classifying as `observed-onMI`.
+
+The exact grouped `onArI serial=2` signature
+`b4fc81d4375de7a0f636f001dc016fe0ca` contains 17 samples over ten captures.
+Its remainder has eight observed length/digest variants, with lengths from
+1367 to 1423 bytes. All samples nevertheless share an opaque common body
+region from absolute offset 34 through 701. The first observed variation is at
+absolute offset 702. This is a `supported` structural boundary across
+independent captures, not a proven field. Nothing inside the opaque common
+body region or at/after the boundary is interpreted.
+
+The exact `onArI serial=1` signature
+`63d1dceaf6490fc728b85a4e13e18bae5c` contains 22 samples over ten captures,
+with twelve length/digest variants from 549 to 596 remainder bytes. Variation
+starts immediately at absolute offset 34, and the group has no common suffix.
+It therefore provides a direct counterexample to a common offset-34+ prefix
+across all exact signatures.
+
+Repeated complete remainders within both `onArI` groups are retained as
+`candidate` repeatability observations because other values occur under the
+same exact signature. The most repeated `serial=2` remainder occurs six times
+over five captures; the most repeated `serial=1` remainder occurs six times
+over four captures. A SHA/digest repeat is not treated as a new field or
+semantic role.
+
+Scans of the first 64 remainder bytes found no `supported` one-, two-, or
+four-byte field equal to envelope `infoSize`, total derived length, or
+remainder length. No supported adjacent repeating-record candidate was found
+for the tested 2-, 4-, 8-, and 16-byte widths. In the `serial=2` group, raw
+byte value `2` occurs at absolute offsets 40 and 83 in every sample; these are
+only `candidate` correlations because envelope `serial` never varies within
+that exact-signature group. They do not establish an index, count, or serial
+field. The assembled segment index relation is explicitly `rejected` because
+no single segment index remains after complete envelope-based grouping.
+
+The first robust non-trivial structure after offset 34 is therefore that
+668-byte opaque common body region and its observed structural boundary at
+absolute offset 702 inside the exact `serial=2` signature. It is not
+generalized to the whole `onArI` family: the `serial=1` group is an explicit
+counterexample. The byte-identical `onMI` remainders are stronger repeatability
+results but provide no next internal boundary. No body parser is recommended
+or implemented from this evidence. There was no codec trial,
+coordinate/float/geometric interpretation, protobuf hypothesis, decoder, map
+model, device call, or production integration.
+
 ### 2.3 Decode the static map first
 
 1. Compare repeated `onMI` and `onArI` captures structurally without assuming

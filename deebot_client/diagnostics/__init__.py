@@ -7,6 +7,13 @@ from .goat_map_blob_inspection import (
     inspect_onmi_info_artifact,
     inspect_opaque_bytes,
 )
+from .goat_map_body_structure import (
+    BodyStructureResearchError,
+    BodyStructureSample,
+    analyze_body_structure_corpus,
+    analyze_body_structure_samples,
+    collect_body_structure_samples,
+)
 from .goat_map_capture import (
     CONTROLLED_MAP_EDIT_CAPTURE_COMMANDS,
     SPECIAL_CONTOUR_CAPTURE_COMMANDS,
@@ -158,6 +165,8 @@ __all__ = [
     "AppPresenceMqttClient",
     "ArtifactDeltaError",
     "BlobInspectionError",
+    "BodyStructureResearchError",
+    "BodyStructureSample",
     "CaptureArtifactError",
     "CaptureLimits",
     "CaptureSecurityError",
@@ -231,6 +240,8 @@ __all__ = [
     "VerifiedOpaqueSegment",
     "VerifiedPhase2Artifact",
     "ZoneAbsentReadbackConfig",
+    "analyze_body_structure_corpus",
+    "analyze_body_structure_samples",
     "analyze_common_header_samples",
     "analyze_cross_family_common_header_corpus",
     "analyze_grouped_on_ari_framing",
@@ -244,6 +255,7 @@ __all__ = [
     "build_app_presence_identity",
     "build_corrected_repeatability_report",
     "byte_diff",
+    "collect_body_structure_samples",
     "collect_common_header_samples",
     "collect_grouped_on_ari_observations",
     "collect_inner_structure_samples",
