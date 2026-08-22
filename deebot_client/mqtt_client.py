@@ -7,7 +7,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import ssl
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urlparse
 
 from aiomqtt import Client, Message, MqttError as AioMqttError
@@ -57,6 +57,19 @@ class MqttConfiguration:
     port: int
     ssl_context: ssl.SSLContext | None
     device_id: str
+
+
+class MqttObserver(Protocol):
+    """Optional observer for passive MQTT diagnostics."""
+
+    def on_connected(self, config: MqttConfiguration) -> None:
+        """Record that a broker connection was established."""
+
+    def on_disconnected(self, config: MqttConfiguration) -> None:
+        """Record that a broker connection ended."""
+
+    def on_message(self, config: MqttConfiguration, message: Message) -> None:
+        """Observe a message without changing normal dispatch."""
 
 
 def create_mqtt_config(
@@ -119,9 +132,12 @@ class MqttClient:
         self,
         config: MqttConfiguration,
         authenticator: Authenticator,
+        *,
+        observer: MqttObserver | None = None,
     ) -> None:
         self._config = config
         self._authenticator = authenticator
+        self._observer = observer
 
         self._subscriptions: MutableMapping[str, SubscriberInfo] = {}
         self._subscription_changes: asyncio.Queue[tuple[SubscriberInfo, bool]] = (
@@ -198,33 +214,40 @@ class MqttClient:
         async def mqtt() -> None:
             while True:
                 try:
-                    async with await self._get_client() as client:
-                        _LOGGER.debug("Subscribe to all previous subscriptions")
-                        for info in self._subscriptions.values():
-                            for topic in _get_topics(info.device_info):
-                                await client.subscribe(topic)
+                    connected = False
+                    try:
+                        async with await self._get_client() as client:
+                            connected = True
+                            self._notify_observer("on_connected", self._config)
+                            _LOGGER.debug("Subscribe to all previous subscriptions")
+                            for info in self._subscriptions.values():
+                                for topic in _get_topics(info.device_info):
+                                    await client.subscribe(topic)
 
-                        async def listen() -> None:
-                            async for message in client.messages:
-                                self._handle_message(message)
+                            async def listen() -> None:
+                                async for message in client.messages:
+                                    self._handle_message(message)
 
-                        tasks = [
-                            asyncio.create_task(listen()),
-                            asyncio.create_task(
-                                self._pending_subscriptions_worker(client)
-                            ),
-                        ]
-                        try:
-                            _LOGGER.debug("All mqtt tasks created")
-                            done, _ = await asyncio.wait(
-                                tasks, return_when=asyncio.FIRST_COMPLETED
-                            )
-                            # Re-raise any exceptions from completed tasks
-                            for task in done:
-                                task.result()
-                        finally:
-                            for task in tasks:
-                                task.cancel()
+                            tasks = [
+                                asyncio.create_task(listen()),
+                                asyncio.create_task(
+                                    self._pending_subscriptions_worker(client)
+                                ),
+                            ]
+                            try:
+                                _LOGGER.debug("All mqtt tasks created")
+                                done, _ = await asyncio.wait(
+                                    tasks, return_when=asyncio.FIRST_COMPLETED
+                                )
+                                # Re-raise any exceptions from completed tasks
+                                for task in done:
+                                    task.result()
+                            finally:
+                                for task in tasks:
+                                    task.cancel()
+                    finally:
+                        if connected:
+                            self._notify_observer("on_disconnected", self._config)
                 except AioMqttError:
                     _LOGGER.warning(
                         "Connection lost; Reconnecting in %d seconds ...",
@@ -250,6 +273,7 @@ class MqttClient:
             "Got message: topic=%s, payload=%s", message.topic, message.payload
         )
         self._last_message_received_at = datetime.now(tz=UTC)
+        self._notify_observer("on_message", self._config, message)
 
         topic_split = message.topic.value.split("/")
         if message.topic.matches("iot/atr/#"):
@@ -322,3 +346,11 @@ class MqttClient:
                 "/".join(topic_split),
                 payload,
             )
+
+    def _notify_observer(self, method: str, *args: Any) -> None:
+        if self._observer is None:
+            return
+        try:
+            getattr(self._observer, method)(*args)
+        except Exception:
+            _LOGGER.exception("MQTT diagnostics observer failed during %s", method)

@@ -33,3 +33,6 @@ test.py
 similarity_output/
 
 *.log
+
+# Local GOAT diagnostic client resource; reused for Ecovacs device verification.
+/.goat-map-refresh-state.json

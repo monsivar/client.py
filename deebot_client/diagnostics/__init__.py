@@ -1,0 +1,51 @@
+"""Opt-in diagnostic helpers."""
+
+from __future__ import annotations
+
+from .goat_map_refresh import (
+    AppPresenceMqttClient,
+    ControlTransport,
+    EndpointSelection,
+    EndpointSource,
+    ExperimentConfig,
+    GoatMapDiagnosticExperiment,
+    GoatMapScenario,
+    JmqMode,
+    LegacyAppPingCommand,
+    LegacyGetMiCommand,
+    MowerState,
+    MqttTrafficRecorder,
+    NgiotControlClient,
+    NgiotEndpoints,
+    NgiotServices,
+    ScenarioFeatures,
+    build_app_presence_identity,
+    create_diagnostic_mqtt_clients,
+    extract_ngiot_services,
+    resolve_ngiot_endpoints,
+    sanitize_capture,
+)
+
+__all__ = [
+    "AppPresenceMqttClient",
+    "ControlTransport",
+    "EndpointSelection",
+    "EndpointSource",
+    "ExperimentConfig",
+    "GoatMapDiagnosticExperiment",
+    "GoatMapScenario",
+    "JmqMode",
+    "LegacyAppPingCommand",
+    "LegacyGetMiCommand",
+    "MowerState",
+    "MqttTrafficRecorder",
+    "NgiotControlClient",
+    "NgiotEndpoints",
+    "NgiotServices",
+    "ScenarioFeatures",
+    "build_app_presence_identity",
+    "create_diagnostic_mqtt_clients",
+    "extract_ngiot_services",
+    "resolve_ngiot_endpoints",
+    "sanitize_capture",
+]

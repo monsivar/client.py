@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from deebot_client.exceptions import ApiError, DeviceVerificationRequiredError
+from deebot_client.models import ApiDeviceInfo
 
 if TYPE_CHECKING:
     from unittest.mock import Mock
@@ -61,3 +62,27 @@ async def test_get_devices_wraps_unexpected_error(
 
     with pytest.raises(ApiError, match="Error on getting devices"):
         await api_client.get_devices()
+
+
+async def test_get_devices_preserves_ngiot_service_info(
+    api_client: ApiClient, authenticator: Mock
+) -> None:
+    raw_device = ApiDeviceInfo(
+        {
+            "class": "2i0fns",
+            "company": "eco-ng",
+            "did": "device",
+            "name": "goat",
+            "resource": "resource",
+            "service": {
+                "jmq": "jmq-ngiot-eu.dc.ww.ecouser.net",
+                "mqs": "api-ngiot.dc-eu.ww.ecouser.net",
+            },
+        }
+    )
+    authenticator.post_authenticated.return_value = {"devices": [raw_device]}
+
+    devices = await api_client.get_devices()
+
+    assert len(devices.mqtt) == 1
+    assert devices.mqtt[0].api["service"] == raw_device["service"]
