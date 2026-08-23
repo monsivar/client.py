@@ -6,7 +6,9 @@ import pytest
 
 from deebot_client.commands.json import GetPos
 from deebot_client.events import Position, PositionsEvent
+from deebot_client.message import HandlingResult, HandlingState
 from deebot_client.rs.map import PositionType
+from tests.fixtures.o1200_position import O1200_POSITION_DATA
 from tests.helpers import get_request_json, get_success_body
 
 from . import assert_command
@@ -50,3 +52,36 @@ async def test_GetPos(
         PositionsEvent(positions=expected_positions),
     )
     await assert_command(GetPos(), json, expected_events)
+
+
+async def test_GetPos_o1200_capture() -> None:
+    """A captured O1200 position must publish the mower, not the invalid dock."""
+    json, firmware_event = get_request_json(get_success_body(O1200_POSITION_DATA))
+
+    await assert_command(
+        GetPos(),
+        json,
+        (
+            firmware_event,
+            PositionsEvent(
+                positions=[Position(type=PositionType.DEEBOT, x=5770, y=10646, a=-55)]
+            ),
+        ),
+        device_class="2i0fns",
+    )
+
+
+async def test_GetPos_all_positions_invalid() -> None:
+    """Invalid entries must not emit mower or charging-station positions."""
+    data = {
+        "deebotPos": {"x": 0, "y": 0, "a": 0, "invalid": 1},
+        "chargePos": [{"x": 0, "y": 0, "a": 0, "invalid": 1}],
+    }
+    json, firmware_event = get_request_json(get_success_body(data))
+
+    await assert_command(
+        GetPos(),
+        json,
+        firmware_event,
+        handling_result=HandlingResult(HandlingState.ANALYSE_LOGGED),
+    )

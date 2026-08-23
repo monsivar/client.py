@@ -260,6 +260,17 @@ async def test_capabilities_event_extraction(
         )
 
 
+async def test_o1200_position_capability() -> None:
+    """The standalone O1200 profile exposes raw position without a map capability."""
+    info = await hardware.get_static_device_info("2i0fns")
+    assert info is not None
+
+    capabilities = info.capabilities
+    assert capabilities.map is None
+    assert capabilities.position is not None
+    assert capabilities.get_refresh_commands(PositionsEvent) == [GetPos()]
+
+
 async def test_all_models_loaded() -> None:
     """Test that all models can be loaded."""
     folder = Path(hardware.__file__).parent

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from deebot_client.commands.json import GetPos
 from deebot_client.commands.json.error import GetError
 from deebot_client.messages import get_message
 from deebot_client.messages.json.battery import OnBattery
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
         ("xmp9ds", "onMapSet", None),
         ("xmp9ds", "onMinorMap", None),
         ("xmp9ds", "onBattery", OnBattery),
+        ("2i0fns", "onPos", GetPos),
     ],
 )
 def test_get_messages(
