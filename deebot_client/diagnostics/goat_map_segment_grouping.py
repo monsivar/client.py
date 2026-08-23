@@ -11,6 +11,7 @@ from .goat_map_representation import (
 )
 
 type EnvelopeValue = str | int
+type SegmentCardinalityValue = str | int
 
 
 class SegmentGroupingError(ValueError):
@@ -55,8 +56,8 @@ class OpaqueSegmentInput:
     """One uninterpreted segment and its observed envelope identity."""
 
     batid: str
-    serial: int
-    index: int
+    serial: SegmentCardinalityValue
+    index: SegmentCardinalityValue
     info_size: EnvelopeValue
     mid: EnvelopeValue
     type: EnvelopeValue
@@ -115,13 +116,15 @@ def assemble_opaque_segment_set(
             raise MixedSegmentIdentityError(
                 "One assembly cannot mix batid, serial, infoSize, mid, type, or using"
             )
-        _validate_index(segment.index)
-        if segment.index in preserved_by_index:
-            message = (
-                f"Duplicate segment index {segment.index} for one envelope identity"
-            )
+        index = normalize_segment_cardinality(
+            "index",
+            segment.index,
+            allow_zero=True,
+        )
+        if index in preserved_by_index:
+            message = f"Duplicate segment index {index} for one envelope identity"
             raise DuplicateSegmentIndexError(message)
-        preserved_by_index[segment.index] = _preserve_segment(segment)
+        preserved_by_index[index] = _preserve_segment(segment, index=index)
 
     expected = set(range(first_identity.serial))
     observed = set(preserved_by_index)
@@ -156,14 +159,18 @@ def group_opaque_segment_sets(
 
 def _identity(segment: OpaqueSegmentInput) -> OpaqueSegmentSetIdentity:
     _validate_batid(segment.batid)
-    _validate_positive_integer("serial", segment.serial)
+    serial = normalize_segment_cardinality(
+        "serial",
+        segment.serial,
+        allow_zero=False,
+    )
     _validate_envelope_value("infoSize", segment.info_size)
     _validate_envelope_value("mid", segment.mid)
     _validate_envelope_value("type", segment.type)
     _validate_envelope_value("using", segment.using)
     return OpaqueSegmentSetIdentity(
         batid=segment.batid,
-        serial=segment.serial,
+        serial=serial,
         info_size=segment.info_size,
         mid=segment.mid,
         type=segment.type,
@@ -171,15 +178,19 @@ def _identity(segment: OpaqueSegmentInput) -> OpaqueSegmentSetIdentity:
     )
 
 
-def _preserve_segment(segment: OpaqueSegmentInput) -> PreservedOpaqueSegment:
+def _preserve_segment(
+    segment: OpaqueSegmentInput,
+    *,
+    index: int,
+) -> PreservedOpaqueSegment:
     try:
         derived = decode_strict_base64_representation(segment.representation)
     except RepresentationDecodeError as err:
-        message = f"Segment index {segment.index} is not strict canonical Base64"
+        message = f"Segment index {index} is not strict canonical Base64"
         raise InvalidSegmentRepresentationError(message) from err
     original = segment.representation.encode("ascii")
     return PreservedOpaqueSegment(
-        index=segment.index,
+        index=index,
         original_representation=segment.representation,
         original_representation_length=len(original),
         original_representation_sha256=sha256(original).hexdigest(),
@@ -194,15 +205,34 @@ def _validate_batid(value: str) -> None:
         raise InvalidSegmentEnvelopeError("batid must be a non-empty string")
 
 
-def _validate_positive_integer(name: str, value: int) -> None:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        message = f"{name} must be a positive integer"
+def normalize_segment_cardinality(
+    name: str,
+    value: SegmentCardinalityValue,
+    *,
+    allow_zero: bool,
+) -> int:
+    """Normalize only integers or canonical ASCII decimal strings."""
+    if isinstance(value, bool):
+        normalized: int | None = None
+    elif isinstance(value, int):
+        normalized = value
+    elif (
+        isinstance(value, str)
+        and value
+        and value.isascii()
+        and value.isdigit()
+        and (value == "0" or not value.startswith("0"))
+    ):
+        normalized = int(value)
+    else:
+        normalized = None
+    if normalized is None or (normalized < 0 if allow_zero else normalized <= 0):
+        expected = "non-negative" if allow_zero else "positive"
+        message = (
+            f"{name} must be a {expected} integer or canonical ASCII decimal string"
+        )
         raise InvalidSegmentEnvelopeError(message)
-
-
-def _validate_index(value: int) -> None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise InvalidSegmentEnvelopeError("index must be a non-negative integer")
+    return normalized
 
 
 def _validate_envelope_value(name: str, value: EnvelopeValue) -> None:

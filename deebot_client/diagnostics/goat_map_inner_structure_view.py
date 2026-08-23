@@ -10,8 +10,8 @@ if TYPE_CHECKING:
 
 type ObservedContextClass = Literal[
     "observed-onMI",
-    "observed-onArI-serial-1",
-    "observed-onArI-serial-2",
+    "observed-onArI-63-signature",
+    "observed-onArI-b4-signature",
     "unknown",
 ]
 
@@ -24,8 +24,8 @@ _OBSERVED_ONMI_SIGNATURES = frozenset(
         bytes.fromhex("d87941b05cc7ff714f1e78d8dc93bd81d1"),
     }
 )
-_OBSERVED_ONARI_SERIAL_1_SIGNATURE = bytes.fromhex("63d1dceaf6490fc728b85a4e13e18bae5c")
-_OBSERVED_ONARI_SERIAL_2_SIGNATURE = bytes.fromhex("b4fc81d4375de7a0f636f001dc016fe0ca")
+_OBSERVED_ONARI_63_SIGNATURE = bytes.fromhex("63d1dceaf6490fc728b85a4e13e18bae5c")
+_OBSERVED_ONARI_B4_SIGNATURE = bytes.fromhex("b4fc81d4375de7a0f636f001dc016fe0ca")
 
 
 class InnerStructureViewError(ValueError):
@@ -40,19 +40,6 @@ class InnerStructureFamilyMismatchError(InnerStructureViewError):
     """A known context signature conflicts with the observed outer family."""
 
 
-class InnerStructureSerialMismatchError(InnerStructureViewError):
-    """A known onArI context signature conflicts with envelope ``serial``."""
-
-    def __init__(self, *, expected: int, observed: int) -> None:
-        self.expected = expected
-        self.observed = observed
-        message = (
-            "Observed onArI context signature conflicts with envelope serial: "
-            f"expected={expected}, observed={observed}"
-        )
-        super().__init__(message)
-
-
 @dataclass(frozen=True, slots=True)
 class InnerStructureView:
     """A byte-preserving classification view with an opaque remainder."""
@@ -61,9 +48,7 @@ class InnerStructureView:
     original_bytes: bytes
     context_signature_raw: bytes
     observed_context_class: ObservedContextClass
-    expected_envelope_serial: int | None
     envelope_serial: int | None
-    serial_matches_observed_context: bool | None
     remainder: bytes
 
     def to_bytes(self) -> bytes:
@@ -93,7 +78,7 @@ def recognize_inner_structure(
         _CONTEXT_SIGNATURE_OFFSET : _CONTEXT_SIGNATURE_OFFSET
         + _CONTEXT_SIGNATURE_LENGTH
     ]
-    context_class, expected_serial, expected_family = _classify_signature(signature)
+    context_class, expected_family = _classify_signature(signature)
     if (
         expected_family is not None
         and structural_header.observed_family != expected_family
@@ -105,34 +90,23 @@ def recognize_inner_structure(
         )
         raise InnerStructureFamilyMismatchError(message)
 
-    serial_matches: bool | None = None
-    if expected_serial is not None and envelope_serial is not None:
-        serial_matches = expected_serial == envelope_serial
-        if not serial_matches:
-            raise InnerStructureSerialMismatchError(
-                expected=expected_serial,
-                observed=envelope_serial,
-            )
-
     return InnerStructureView(
         structural_header=structural_header,
         original_bytes=original,
         context_signature_raw=signature,
         observed_context_class=context_class,
-        expected_envelope_serial=expected_serial,
         envelope_serial=envelope_serial,
-        serial_matches_observed_context=serial_matches,
         remainder=original[_REMAINDER_OFFSET:],
     )
 
 
 def _classify_signature(
     signature: bytes,
-) -> tuple[ObservedContextClass, int | None, Literal["onMI", "onArI"] | None]:
+) -> tuple[ObservedContextClass, Literal["onMI", "onArI"] | None]:
     if signature in _OBSERVED_ONMI_SIGNATURES:
-        return "observed-onMI", None, "onMI"
-    if signature == _OBSERVED_ONARI_SERIAL_1_SIGNATURE:
-        return "observed-onArI-serial-1", 1, "onArI"
-    if signature == _OBSERVED_ONARI_SERIAL_2_SIGNATURE:
-        return "observed-onArI-serial-2", 2, "onArI"
-    return "unknown", None, None
+        return "observed-onMI", "onMI"
+    if signature == _OBSERVED_ONARI_63_SIGNATURE:
+        return "observed-onArI-63-signature", "onArI"
+    if signature == _OBSERVED_ONARI_B4_SIGNATURE:
+        return "observed-onArI-b4-signature", "onArI"
+    return "unknown", None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from deebot_client.event_bus import EventBus
@@ -103,6 +104,24 @@ class FrontendReloadAttributionConfig:
             raise ValueError(
                 "Passive attribution window must be between 60 and 90 seconds"
             )
+        if self.connect_timeout <= 0:
+            raise ValueError("Connection timeout must be positive")
+
+
+@dataclass(frozen=True, kw_only=True)
+class PollerIsolationConfig:
+    """Timing and state metadata for one passive external-poller check."""
+
+    phase: str = "p2-12-poller-isolation"
+    mower_state: MowerState = MowerState.PAUSED
+    quiet_seconds: float = 480
+    connect_timeout: float = 30
+
+    def __post_init__(self) -> None:
+        if self.mower_state is not MowerState.PAUSED:
+            raise ValueError("Poller isolation requires a paused mower")
+        if not 480 <= self.quiet_seconds <= 1800:
+            raise ValueError("Poller isolation must run for 480 to 1800 seconds")
         if self.connect_timeout <= 0:
             raise ValueError("Connection timeout must be positive")
 
@@ -770,6 +789,90 @@ class GoatMapFrontendReloadAttributionExperiment:
         return report
 
 
+class GoatMapPollerIsolationExperiment:
+    """Observe normal MQ quietly without issuing any device-control call."""
+
+    def __init__(
+        self,
+        *,
+        authenticator: Authenticator,
+        device_info: DeviceInfo,
+        device_id: str,
+        country: str,
+        writer: GoatMapCaptureWriter,
+    ) -> None:
+        self._authenticator = authenticator
+        self._device_info = device_info
+        self._device_id = device_id
+        self._country = country
+        self._writer = writer
+
+    async def run(self, config: PollerIsolationConfig) -> dict[str, Any]:
+        """Run one uninterrupted passive quiet window on normal MQ."""
+        recorder = MqttTrafficRecorder(
+            phase=config.phase,
+            mower_state=config.mower_state,
+        )
+        normal = MqttClient(
+            create_mqtt_config(device_id=self._device_id, country=self._country),
+            self._authenticator,
+            observer=recorder.observer("mq"),
+        )
+
+        async def no_command(_: Command) -> dict[str, Any]:
+            return {}
+
+        event_bus = EventBus(no_command, self._device_info.static.capabilities)
+        subscriptions: list[Callable[[], None]] = []
+
+        async def on_state(event: StateEvent) -> None:
+            state = _capture_state(event.state)
+            recorder.record_mower_state(state, "mqtt-state")
+            self._writer.set_context(recorder.records[-1].phase, state)
+
+        subscriptions.append(event_bus.subscribe(StateEvent, on_state))
+
+        def handle_known_message(name: str, payload: str | bytes | bytearray) -> None:
+            if message := get_message(name, self._device_info.static):
+                message.handle(event_bus, payload)
+
+        quiet_phase = f"{config.phase}:quiet-observation"
+        try:
+            subscriptions.append(
+                await normal.subscribe(
+                    SubscriberInfo(self._device_info, event_bus, handle_known_message)
+                )
+            )
+            await recorder.wait_connected("mq", config.connect_timeout)
+            recorder.set_context(quiet_phase, config.mower_state)
+            self._writer.set_context(quiet_phase, config.mower_state)
+            recorder.record_window("started")
+            await asyncio.sleep(config.quiet_seconds)
+            recorder.record_window("ended")
+        finally:
+            for unsubscribe in subscriptions:
+                unsubscribe()
+            await normal.disconnect()
+            await event_bus.teardown()
+
+        report = recorder.report()
+        report["experiment"] = {
+            **asdict(config),
+            "capture_mode": "poller-isolation",
+            "mqtt": "normal-mq",
+            "jmq": "none",
+            "diagnostic_control_actions": [],
+            "app_open_during_quiet_window": False,
+            "payload_decoding": False,
+            "quiet_window": quiet_phase,
+        }
+        report["poller_isolation"] = summarize_poller_isolation_window(
+            recorder.records,
+            quiet_phase,
+        )
+        return report
+
+
 class GoatMapZoneAbsentReadbackExperiment:
     """Passively capture an app-triggered SpecialContour absent-state readback."""
 
@@ -1237,6 +1340,172 @@ _ATTRIBUTION_TRIGGER_METADATA = {
         "note": "temporally correlated with operator-triggered official Ecovacs app open",
     },
 }
+
+
+def summarize_poller_isolation_window(
+    records: Sequence[Any],
+    quiet_phase: str,
+) -> dict[str, Any]:
+    """Summarize passive request/response timing without source attribution."""
+    markers = [
+        record
+        for record in records
+        if record.kind == "window" and record.phase == quiet_phase
+    ]
+    started = next((record for record in markers if record.state == "started"), None)
+    ended = next(
+        (record for record in reversed(markers) if record.state == "ended"),
+        None,
+    )
+    if started is None or ended is None:
+        raise ValueError("Poller-isolation window is missing timing markers")
+    started_at = datetime.fromisoformat(started.observed_at)
+    ended_at = datetime.fromisoformat(ended.observed_at)
+    mqtt_records = [
+        record
+        for record in records
+        if record.kind == "mqtt"
+        and record.phase == quiet_phase
+        and record.command is not None
+        and record.direction in {"request", "response"}
+    ]
+    commands: dict[str, dict[str, Any]] = {}
+    for command in sorted({str(record.command) for record in mqtt_records}):
+        selected = [record for record in mqtt_records if record.command == command]
+        requests = [record for record in selected if record.direction == "request"]
+        responses = [record for record in selected if record.direction == "response"]
+        request_times = [datetime.fromisoformat(record.observed_at) for record in requests]
+        intervals = [
+            (after - before).total_seconds()
+            for before, after in pairwise(request_times)
+        ]
+        commands[command] = {
+            "request_count": len(requests),
+            "response_count": len(responses),
+            "request_observations": [
+                _poller_request_timing(record, responses, started_at) for record in requests
+            ],
+            "response_observations": [
+                {
+                    "observed_at": record.observed_at,
+                    "offset_seconds": (
+                        datetime.fromisoformat(record.observed_at) - started_at
+                    ).total_seconds(),
+                }
+                for record in responses
+            ],
+            "request_intervals_seconds": intervals,
+            "periodicity": _poller_periodicity(intervals, len(requests)),
+        }
+    external_requests = [
+        {
+            "command": record.command,
+            "observed_at": record.observed_at,
+            "offset_seconds": (
+                datetime.fromisoformat(record.observed_at) - started_at
+            ).total_seconds(),
+            "classification": "concurrent-external",
+        }
+        for record in mqtt_records
+        if record.direction == "request"
+    ]
+    verified = not external_requests
+    periodic = any(
+        command["periodicity"]["approximately_360_seconds"]
+        for command in commands.values()
+    )
+    read_only_requests = all(
+        str(item["command"]).casefold().startswith("get")
+        for item in external_requests
+    )
+    if verified:
+        observation = "no-concurrent-external-requests-observed"
+    elif periodic and read_only_requests:
+        observation = (
+            "periodic concurrent-external read-only polling, source unattributed"
+        )
+    elif read_only_requests:
+        observation = (
+            "concurrent-external read-only polling observed, source unattributed"
+        )
+    else:
+        observation = "concurrent-external request observed, source unattributed"
+    return {
+        "classification": "verified-for-retry" if verified else "external-polling-observed",
+        "quiet_environment_status": (
+            "verified-for-retry" if verified else "not-verified-for-retry"
+        ),
+        "source_attribution": "unknown",
+        "observation": observation,
+        "window_started_at": started.observed_at,
+        "window_ended_at": ended.observed_at,
+        "observed_seconds": (ended_at - started_at).total_seconds(),
+        "diagnostic_control_actions": [],
+        "external_request_count": len(external_requests),
+        "external_requests": external_requests,
+        "commands": commands,
+        "network_timestamps_authoritative": True,
+        "request_response_pairing": "nearest-later-same-command-timing-candidate",
+        "client_identity_observed": False,
+        "complete_topics_retained": False,
+        "source_semantics": False,
+    }
+
+
+def _poller_request_timing(
+    request: Any,
+    responses: Sequence[Any],
+    started_at: datetime,
+) -> dict[str, Any]:
+    request_at = datetime.fromisoformat(request.observed_at)
+    response = next(
+        (
+            item
+            for item in responses
+            if datetime.fromisoformat(item.observed_at) >= request_at
+        ),
+        None,
+    )
+    response_at = (
+        datetime.fromisoformat(response.observed_at) if response is not None else None
+    )
+    return {
+        "observed_at": request.observed_at,
+        "offset_seconds": (request_at - started_at).total_seconds(),
+        "nearest_later_response_at": (
+            response.observed_at if response is not None else None
+        ),
+        "nearest_later_response_delta_seconds": (
+            (response_at - request_at).total_seconds()
+            if response_at is not None
+            else None
+        ),
+    }
+
+
+def _poller_periodicity(
+    intervals: Sequence[float],
+    request_count: int,
+) -> dict[str, Any]:
+    if request_count == 0:
+        return {"status": "not-observed", "approximately_360_seconds": False}
+    if not intervals:
+        return {
+            "status": "single-observation-insufficient",
+            "approximately_360_seconds": False,
+        }
+    approximately_360 = all(330 <= interval <= 390 for interval in intervals)
+    return {
+        "status": (
+            "approximately-360-second-cadence-observed"
+            if approximately_360
+            else "intervals-observed-without-360-second-match"
+        ),
+        "approximately_360_seconds": approximately_360,
+        "interval_count": len(intervals),
+        "minimum_seconds": min(intervals),
+        "maximum_seconds": max(intervals),
+    }
 
 
 def summarize_frontend_reload_window(

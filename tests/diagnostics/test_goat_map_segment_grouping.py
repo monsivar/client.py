@@ -9,6 +9,7 @@ import pytest
 from deebot_client.diagnostics.goat_map_segment_grouping import (
     DuplicateSegmentIndexError,
     IncompleteSegmentGroupError,
+    InvalidSegmentEnvelopeError,
     InvalidSegmentRepresentationError,
     MixedSegmentIdentityError,
     OpaqueSegmentInput,
@@ -24,10 +25,10 @@ def _representation(decoded_length: int, seed: int) -> str:
 
 def _segment(
     *,
-    index: int,
+    index: str | int,
     representation: str,
     batid: str = "opaque-batch-a",
-    serial: int = 2,
+    serial: str | int = 2,
     info_size: int = 1756,
     mid: str = "1",
     segment_type: int = 0,
@@ -113,6 +114,75 @@ def test_reversed_arrival_order_is_sorted_by_index() -> None:
     assert result.derived_concatenation == base64.b64decode(
         first.representation
     ) + base64.b64decode(second.representation)
+
+
+def test_canonical_decimal_strings_group_identically_to_integers() -> None:
+    representations = (_representation(768, 7), _representation(653, 9))
+    integer_result = assemble_opaque_segment_set(
+        [
+            _segment(index=0, serial=2, representation=representations[0]),
+            _segment(index=1, serial=2, representation=representations[1]),
+        ]
+    )
+    string_result = assemble_opaque_segment_set(
+        [
+            _segment(index="0", serial="2", representation=representations[0]),
+            _segment(index="1", serial="2", representation=representations[1]),
+        ]
+    )
+
+    assert string_result.identity == integer_result.identity
+    assert string_result.segments == integer_result.segments
+    assert string_result.derived_concatenation == integer_result.derived_concatenation
+    assert (
+        string_result.derived_concatenation_sha256
+        == integer_result.derived_concatenation_sha256
+    )
+
+
+def test_mixed_integer_and_canonical_string_cardinality_share_one_group() -> None:
+    groups = group_opaque_segment_sets(
+        [
+            _segment(index="0", serial=2, representation=_representation(768, 7)),
+            _segment(index=1, serial="2", representation=_representation(653, 9)),
+        ]
+    )
+
+    assert len(groups) == 1
+    assert groups[0].identity.serial == 2
+    assert [segment.index for segment in groups[0].segments] == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("serial", "0"),
+        ("serial", "00"),
+        ("serial", "01"),
+        ("serial", "+1"),
+        ("serial", " 1"),
+        ("serial", "1 "),
+        ("serial", "\N{ARABIC-INDIC DIGIT ONE}"),
+        ("serial", True),
+        ("index", "00"),
+        ("index", "01"),
+        ("index", "-1"),
+        ("index", "1.0"),
+        ("index", False),
+    ],
+)
+def test_noncanonical_or_unexpected_cardinality_is_rejected(
+    field: str,
+    value: str | bool,
+) -> None:
+    segment = _segment(index=0, serial=1, representation=_representation(10, 1))
+    if field == "serial":
+        segment = replace(segment, serial=value)  # type: ignore[arg-type]
+    else:
+        segment = replace(segment, index=value)  # type: ignore[arg-type]
+
+    with pytest.raises(InvalidSegmentEnvelopeError, match="canonical ASCII decimal"):
+        assemble_opaque_segment_set([segment])
 
 
 def test_duplicate_index_is_explicit_error() -> None:

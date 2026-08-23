@@ -13,11 +13,13 @@ from deebot_client.diagnostics.goat_map_capture import (
 from deebot_client.diagnostics.goat_map_phase2 import (
     ControlledMapEditConfig,
     FrontendReloadAttributionConfig,
+    PollerIsolationConfig,
     SpecialContourDeleteConfig,
     ZoneAbsentReadbackConfig,
     _SpecialContourTransitionObserver,
     summarize_controlled_map_edit_window,
     summarize_frontend_reload_window,
+    summarize_poller_isolation_window,
     summarize_special_contour_delete,
     summarize_zone_absent_readback,
 )
@@ -68,6 +70,15 @@ def test_frontend_reload_config_enforces_controlled_window() -> None:
         FrontendReloadAttributionConfig(reload_window_seconds=91)
     with pytest.raises(ValueError, match="Unsupported"):
         FrontendReloadAttributionConfig(trigger="unknown")
+
+
+def test_poller_isolation_config_requires_paused_eight_minute_window() -> None:
+    PollerIsolationConfig(mower_state=MowerState.PAUSED, quiet_seconds=480)
+
+    with pytest.raises(ValueError, match="paused"):
+        PollerIsolationConfig(mower_state=MowerState.MOWING)
+    with pytest.raises(ValueError, match="480"):
+        PollerIsolationConfig(quiet_seconds=479)
 
 
 def test_controlled_map_edit_config_requires_paused_bounded_window() -> None:
@@ -248,6 +259,92 @@ def test_official_app_open_summary_uses_distinct_unattributed_window() -> None:
     assert summary["trigger"] == "official-app-open"
     assert summary["window_label"] == "official-app-open-window"
     assert summary["pattern_result"] == "no-target-control-pattern"
+
+
+def test_poller_isolation_summary_verifies_request_free_window() -> None:
+    phase = "p2-poller:quiet-observation"
+    started_at = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    records = [
+        _record(
+            observed_at=started_at,
+            phase=phase,
+            kind="window",
+            state="started",
+        ),
+        _record(
+            observed_at=started_at + timedelta(seconds=480),
+            phase=phase,
+            kind="window",
+            state="ended",
+        ),
+    ]
+
+    summary = summarize_poller_isolation_window(records, phase)
+
+    assert summary["quiet_environment_status"] == "verified-for-retry"
+    assert summary["external_request_count"] == 0
+    assert summary["source_attribution"] == "unknown"
+    assert summary["diagnostic_control_actions"] == []
+
+
+def test_poller_isolation_summary_reports_unattributed_360_second_polling() -> None:
+    phase = "p2-poller:quiet-observation"
+    started_at = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    records = [
+        _record(
+            observed_at=started_at,
+            phase=phase,
+            kind="window",
+            state="started",
+        ),
+        _record(
+            observed_at=started_at + timedelta(seconds=30),
+            phase=phase,
+            command="getBattery",
+            direction="request",
+        ),
+        _record(
+            observed_at=started_at + timedelta(seconds=30.2),
+            phase=phase,
+            command="getBattery",
+            direction="response",
+        ),
+        _record(
+            observed_at=started_at + timedelta(seconds=390),
+            phase=phase,
+            command="getBattery",
+            direction="request",
+        ),
+        _record(
+            observed_at=started_at + timedelta(seconds=390.2),
+            phase=phase,
+            command="getBattery",
+            direction="response",
+        ),
+        _record(
+            observed_at=started_at + timedelta(seconds=480),
+            phase=phase,
+            kind="window",
+            state="ended",
+        ),
+    ]
+
+    summary = summarize_poller_isolation_window(records, phase)
+
+    assert summary["quiet_environment_status"] == "not-verified-for-retry"
+    assert summary["source_attribution"] == "unknown"
+    assert summary["external_request_count"] == 2
+    assert summary["observation"] == (
+        "periodic concurrent-external read-only polling, source unattributed"
+    )
+    battery = summary["commands"]["getBattery"]
+    assert battery["request_intervals_seconds"] == [360.0]
+    assert battery["periodicity"]["status"] == (
+        "approximately-360-second-cadence-observed"
+    )
+    assert battery["request_observations"][0][
+        "nearest_later_response_delta_seconds"
+    ] == pytest.approx(0.2)
 
 
 def test_zone_absent_summary_is_passive_and_preserves_network_timing() -> None:

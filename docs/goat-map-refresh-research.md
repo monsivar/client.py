@@ -2231,12 +2231,15 @@ request/cadence roles, while still preserving the actual byte evidence rather
 than collapsing two different representations into one claimed signature.
 
 The two observed grouped `onArI` signatures map to
-`observed-onArI-serial-1` and `observed-onArI-serial-2`. Envelope `serial` is
-optional validating metadata; a known signature paired with the other
-observed serial raises an explicit mismatch. Unknown signatures retain their
-raw bytes, return class `unknown`, and are not rejected when the outer framing
-is otherwise valid. A known signature that conflicts with the already
-validated outer family is a separate explicit structural mismatch.
+`observed-onArI-63-signature` and `observed-onArI-b4-signature`. Envelope
+cardinality is retained as a separate observation and is not inferred or
+validated from either signature. This supersedes the earlier
+`observed-onArI-serial-1` / `observed-onArI-serial-2` classification: P2-09
+later observed the byte-identical `b4fc...fe0ca` signature with `serial=3`.
+Unknown signatures retain their raw bytes, return class `unknown`, and are not
+rejected when the outer framing is otherwise valid. A known signature that
+conflicts with the already validated outer family remains a separate explicit
+structural mismatch.
 
 No byte inside the context signature is exposed as a subfield. Offset 34 and
 later remain opaque, and variation at offset 34 does not affect context
@@ -2273,8 +2276,11 @@ internal field boundary: there is no variation inside either group from which
 to locate one. The two raw signatures and their remainders remain separate
 despite both signatures classifying as `observed-onMI`.
 
-The exact grouped `onArI serial=2` signature
+The exact grouped `onArI` `b4fc...fe0ca` signature
 `b4fc81d4375de7a0f636f001dc016fe0ca` contains 17 samples over ten captures.
+All P2-01--P2-08 instances happened to have `serial=2`; P2-09 later supplied
+three byte-identical complete `serial=3` groups, so cardinality is not part of
+the signature classification.
 Its remainder has eight observed length/digest variants, with lengths from
 1367 to 1423 bytes. All samples nevertheless share an opaque common body
 region from absolute offset 34 through 701. The first observed variation is at
@@ -2282,7 +2288,7 @@ absolute offset 702. This is a `supported` structural boundary across
 independent captures, not a proven field. Nothing inside the opaque common
 body region or at/after the boundary is interpreted.
 
-The exact `onArI serial=1` signature
+The exact grouped `onArI` `63d1...bae5c` signature
 `63d1dceaf6490fc728b85a4e13e18bae5c` contains 22 samples over ten captures,
 with twelve length/digest variants from 549 to 596 remainder bytes. Variation
 starts immediately at absolute offset 34, and the group has no common suffix.
@@ -2308,30 +2314,1061 @@ no single segment index remains after complete envelope-based grouping.
 
 The first robust non-trivial structure after offset 34 is therefore that
 668-byte opaque common body region and its observed structural boundary at
-absolute offset 702 inside the exact `serial=2` signature. It is not
-generalized to the whole `onArI` family: the `serial=1` group is an explicit
-counterexample. The byte-identical `onMI` remainders are stronger repeatability
+absolute offset 702 inside the exact `b4fc...fe0ca` signature. It is not
+generalized to the whole `onArI` family: the `63d1...bae5c` group is an
+explicit counterexample. The byte-identical `onMI` remainders are stronger repeatability
 results but provide no next internal boundary. No body parser is recommended
 or implemented from this evidence. There was no codec trial,
 coordinate/float/geometric interpretation, protobuf hypothesis, decoder, map
 model, device call, or production integration.
 
-### 2.3 Decode the static map first
+#### Selected next controlled differential: one Area split
 
-1. Compare repeated `onMI` and `onArI` captures structurally without assuming
-   an encoding.
-2. Identify the outer representation first: JSON fields, base64/hex wrapping,
-   compression, framing, checksums, and chunk ordering only when demonstrated
-   by the captures.
-3. Implement small pure decoders one layer at a time, backed by sanitized golden
-   fixtures and explicit failure behavior for unknown versions.
-4. Model only verified static concepts such as map identity, bounds, boundary,
-   areas, exclusions, and charging-station position. Preserve unknown fields as
-   opaque metadata rather than guessing their meaning.
+The preferred next controlled variable is **Map Editing -> Area -> Divide**,
+provided that the installed app exposes the operation for this mower without
+starting new physical boundary mapping. Exactly one existing working area will
+be divided into exactly two areas. The resulting split must remain in place
+until the artifact and derived comparison have been verified. Merging those
+same two areas back together is reserved for a later, separately captured
+inverse control; it is not part of the split artifact.
 
-Exit criterion: at least two captures of the same static map decode
-deterministically, and a controlled map edit causes an explainable fixture
-change.
+A true No-Entry Zone remains the fallback if Divide is unavailable or requires
+disproportionate physical mapping/operator work. It is not the default because
+it requires remotely driving a closed boundary and has materially higher
+operational cost. Renaming an existing area remains a low-risk negative
+control, not the primary differential: existing evidence makes a UI- or
+`AreaSet`-only change more plausible than an `onMI`/`onArI` body change.
+
+This subsection initially recorded experiment design only. Selecting the
+candidate did not itself run a capture or add a semantic parser or geometry
+model; the passive runner described below was implemented only after the gate
+and safety requirements were approved.
+
+##### Split experiment preconditions
+
+The diagnostic must refuse to offer the edit prompt unless all applicable
+preconditions are recorded or satisfied:
+
+1. The operator has confirmed that the installed app offers Divide for an
+   existing area without asking GOAT to map or physically drive a new boundary.
+2. One suitable existing area has been selected. No area name, mowing
+   parameter, path, contour, schedule, boundary, or other setting will change.
+3. GOAT is paused and stationary before capture, and the declared mower state
+   matches the observed state metadata. Pausing is completed before the
+   measured baseline; the diagnostic never sends pause or another control.
+4. The official app is closed at baseline, and other household users have been
+   asked not to open or control the mower during the measured windows.
+5. The diagnostic uses only normal-MQ observation and sends no JMQ,
+   `appping`, `getMI`, or other device-control call. The official Ecovacs app
+   is the only allowed external control source inside the explicitly marked
+   app-init/edit windows. App-originated `appping`, `getMI`, `getAreaSet`, and
+   related traffic is expected observation there and does not fail the gate.
+   Unexpected control sequences outside those marked app windows are reported
+   as possible `concurrent-external` traffic.
+6. The output directory is new, capture limits and fail-closed secret checks
+   are active, and the normal-MQ session is connected before timing begins.
+7. There is no visible map-saving/updating operation already in progress.
+
+The stable pre-split readback gate consists of two read-only app map
+initializations in the same `pre-split-app-init` phase, separated by closing
+the app and a short quiet interval. Both initializations must preserve:
+
+- the same observed `mid` across known map messages;
+- the same `onMI.info` representation digest and length for at least one
+  comparable observed role in both rounds;
+- the same complete observed set of `getAreaSet` keys
+  (`mid`, `aid`, `type`) and subset digests;
+- at least one complete envelope-valid grouped `onArI` set in each round.
+
+Byte-identical grouped `onArI` values are deliberately not a gate because the
+existing corpus demonstrates valid variability under unchanged external
+conditions. Every variant is retained structurally. Missing required readback,
+conflicting map IDs, a changed AreaSet set, an incomplete grouped `onArI`, a
+mower-state transition, or concurrent unexplained control traffic makes the
+precondition `inconclusive`; the edit must not proceed in that artifact.
+
+##### Concrete operator sequence
+
+1. Pause GOAT and confirm it is stationary. Close the official app and ensure
+   no other known client is using the mower map.
+2. Start passive normal-MQ capture and record 30--45 seconds of app-closed
+   baseline in a distinct `pre-split-baseline` window.
+3. Start `pre-split-app-init-1`, open the official app directly to the mower
+   map, make no changes, and wait for the complete static-family readback and a
+   quiet interval.
+4. Close the app, record a short marked quiet interval, then start
+   `pre-split-app-init-2` and open the same map again. Proceed only if the
+   stable pre-split gate above passes.
+5. Start a separate `split-edit` window. Enter **Map Editing -> Area ->
+   Divide**, select only the pre-agreed existing area, and draw exactly one
+   dividing line so that the area becomes exactly two. Do not rename either
+   result or change any mowing option.
+6. Start/mark `split-save`, save exactly once, and record the operator's manual
+   confirmation time and any visible saving/updating status. The first observed
+   relevant outbound network request is authoritative; the manual marker is
+   operator context. If no request is visible, report
+   `write_attribution=unattributed` rather than assigning the marker as network
+   time.
+7. Keep the app on the map and observe automatic refresh in a separate
+   `post-split-readback` window for 120--180 seconds. After a quiet interval,
+   one explicitly marked close/reopen of the same map may be used to obtain an
+   independent post-split readback; no edit is made during that reopen.
+8. End capture only after final mower state, window boundaries, command timing,
+   and artifact completeness are recorded. Leave the two areas split. Do not
+   merge until both the artifact and the derived comparison are verified.
+
+##### Capture and postconditions
+
+Discovery around save must retain sanitized command name, direction,
+transport, timestamp, window, and safe topic shape for every map-related
+`set*`/`on*`, including previously unknown command names. An unknown command's
+payload remains absent unless it is explicitly added to the bounded opaque
+allowlist and independently passes the existing fail-closed security policy.
+The known opaque capture scope includes `getAreaSet`/`onAreaSet`,
+`getMI`/`onMI`/`onArI`, `getSpecialContour`/`onSpecialContour`, and map-state
+and map-track families.
+
+A complete post-split result requires:
+
+- exactly one operator-confirmed Divide/save action and no other setting
+  change;
+- unchanged mower identity, transport setup, and declared mower state; pre- and
+  post-split `mid` values are recorded and compared, but a consistent `mid`
+  transition at the save boundary is an observation rather than an automatic
+  failure;
+- at least one complete post-save static-family readback plus the independent
+  marked readback when it is needed to establish persistence;
+- complete grouped `onArI` sets rather than partial segment comparisons;
+- no unresolved concurrent external control sequence;
+- the artifact passing record/blob count, size, SHA-256, canonical path, and
+  secret-policy verification;
+- the areas still being split when capture and comparison finish.
+
+Derived comparison must answer, without semantic interpretation, whether
+`onMI`, complete grouped `onArI`, or `getAreaSet.subsets` changed; whether new
+`aid` values or `(aid, type)` combinations appeared; whether a new `set*`
+command occurred; and whether `infoSize`, exact context signatures, or the
+already documented opaque structural regions changed. `SpecialContour` and
+map-state/map-track observations remain independent controls. No differing
+bytes are called geometry, area records, or any other semantic map concept.
+
+##### Implemented passive split runner
+
+The opt-in `controlled-area-split` mode implements the design as an explicit
+state machine: `pre-split-baseline`, `pre-split-app-init-1`, a marked
+app-closed quiet interval, `pre-split-app-init-2`,
+`precondition-evaluation`, gated `split-edit`, `split-save`,
+`post-split-readback`, and optional `post-split-reopen`. The diagnostic opens
+only normal MQ and sends no JMQ, `appping`, `getMI`, pause, or other control
+call. Official-app-originated requests are allowed observations in the marked
+app-init/edit/readback windows. A request outside those windows is retained as
+sanitized command/timing and flagged `concurrent-external` during the gate.
+
+The edit callback is unreachable unless the evaluation returns exactly
+`passed`. A failed/missing stable readback finalizes the safe partial artifact
+as `inconclusive/precondition-failed` and ends before any edit prompt. Grouped
+`onArI` bytes may differ between the two init rounds; only one complete
+envelope-valid set per round is required. The current bounded opaque allowlist
+is reused unchanged. A new command is discoverable through sanitized command,
+direction, topic shape, window, and timestamp, but its payload is not retained
+merely because its name resembles `set*`.
+
+After the edit gate opens, the first relevant outbound map-write in the armed
+edit/save windows is the network timestamp candidate. Read commands such as
+`getMapTrack` are excluded. If more than one distinct write command is seen,
+attribution is `ambiguous`; if none is seen, it is `unattributed`. The
+operator's Enter timestamp never replaces a network timestamp. Write
+attribution is reported separately and never claims an unobserved transport or
+command. Missing or ambiguous attribution does not by itself downgrade a
+complete controlled before/after delta. Missing post-save `onMI`, missing
+post-save `getAreaSet`, missing complete post-save grouped `onArI`, or a
+non-paused state transition does make the delta `inconclusive`. It does not
+erase the artifact and does not authorize merging the areas.
+
+The report therefore exposes separate `experiment_status`, `delta_status`, and
+`write_attribution.status` values. When the gate and postconditions pass,
+`delta_status=controlled-structural-evidence` remains valid with either
+`write_attribution.status=unattributed` or `ambiguous`. A uniquely observed
+outbound candidate may be `attributed` with its network timestamp, but this is
+not a prerequisite for the structural comparison.
+
+The metadata-only comparison uses exactly `unchanged`,
+`occurrence-count-changed`, `value-changed`, `before-only`, and `after-only`.
+It explicitly reports that no byte delta is proven by presence/absence or by a
+digest comparison alone. Pre/post `mid` is compared rather than required to
+remain stable. `onMI` structural views, complete grouped `onArI` signatures and
+opaque regions, AreaSet keys/subset digests, new/missing `aid` and `type`, broad
+map command timing, and `SpecialContour` as a side-effect control are retained
+without semantic decoding.
+
+The first approved invocation used the following paths:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode controlled-area-split `
+  --country NO `
+  --phase p2-09-controlled-area-split `
+  --mower-state paused `
+  --device-class 2i0fns `
+  --baseline-seconds 45 `
+  --app-init-seconds 45 `
+  --between-init-quiet-seconds 10 `
+  --post-split-seconds 150 `
+  --post-split-reopen `
+  --post-reopen-seconds 60 `
+  --artifact-dir .goat-map-phase2\p2-09-controlled-area-split `
+  --report-output goat-map-p2-09-controlled-area-split-summary.json
+```
+
+Omit `--post-split-reopen` only when the primary 150-second readback is known
+to be sufficient; the default plan keeps the independently marked reopen.
+
+##### P2-09 immutable pre-edit abort and cardinality correction
+
+Capture `b00abd490d3342d1879082dcc4cd8617` is retained unchanged as a correct
+fail-closed pre-edit abort. The runner reported
+`experiment_status=inconclusive`, `delta_status=not-comparable`, and
+`write_attribution.status=not-evaluated`. The split gate never opened, no
+Divide/Save prompt was reached, and no map change was performed. The run must
+not be reclassified as a successful experiment or controlled differential
+evidence.
+
+The immediate cause was an observer type mismatch: this mower supplied
+`onArI` envelope `serial` and `index` as canonical decimal strings. The
+capture preserved those raw values correctly, but the derived P2-09 observer
+accepted only integers and therefore reported `TypeError` before grouping.
+Derived normalization now accepts only an actual integer (excluding boolean)
+or a canonical ASCII decimal string: the string is non-empty, contains only
+ASCII digits, has no sign/whitespace, and is exactly `"0"` or has no leading
+zero. `serial` must be greater than zero and `index` must be non-negative.
+No other type coercion is performed, and artifact representations remain
+unchanged.
+
+Read-only re-evaluation of the immutable artifact produces three complete
+groups: two in app-init 1 and one in app-init 2. Every group has normalized
+`serial=3`, indexes `0,1,2`, representation lengths `1024+1024+156`, derived
+length 1651, and derived SHA-256
+`aabdcb55ae2bcea24fe18eb0c37f27cbe99bcfb9a71fd30b7a147aeb99978b4c`.
+This is byte-identical pre-split evidence; the differing occurrence counts are
+not a value delta. The original report had already passed the other gate
+checks: static `mid=1`; request-associated `onMI` length 876 and SHA-256
+`12cbcb330c3b91334f72b41470e09361310853554f8292bc83e4dd72dfbdd5bb`;
+and stable AreaSet keys `(1,0,ar)` and `(1,0,vw)` with unchanged subset
+length/digest values. This derived finding explains the abort but does not
+rewrite its status.
+
+The verified P2-01--P2-09 corpus contains twelve immutable artifacts and 42
+complete grouped `onArI` sets: 22 with normalized `serial=1`, 17 with
+`serial=2`, and three with `serial=3`. There are no excluded groups and no
+counterexamples among complete groups to both observed relations:
+
+- `serial == number of observed indexes`;
+- `indexes == 0 .. serial-1`.
+
+This is documented only as an **observed structural completeness relation for
+grouped `onArI`**. It is not a general firmware-level meaning for the field
+name `serial`.
+
+P2-09 also disproves the old exclusive association between signature
+`b4fc81d4375de7a0f636f001dc016fe0ca` and `serial=2`. The implementation now
+classifies exact byte patterns independently as `observed-onArI-b4-signature`
+and `observed-onArI-63-signature`; envelope cardinality is stored alongside,
+not validated from those classes. Historical P2-01--P2-08 correlations remain
+valid descriptions of that narrower corpus, not universal constraints.
+
+The first retry created a fresh artifact and report and did not overwrite the
+first P2-09 capture:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode controlled-area-split `
+  --country NO `
+  --phase p2-09b-controlled-area-split `
+  --mower-state paused `
+  --device-class 2i0fns `
+  --baseline-seconds 45 `
+  --app-init-seconds 45 `
+  --between-init-quiet-seconds 10 `
+  --post-split-seconds 150 `
+  --post-split-reopen `
+  --post-reopen-seconds 60 `
+  --artifact-dir .goat-map-phase2\p2-09b-controlled-area-split `
+  --report-output goat-map-p2-09b-controlled-area-split-summary.json
+```
+
+##### P2-09b immutable pre-edit abort
+
+Capture `bbe94eecdb6a404ba63102a8fa22c69f` is retained unchanged as a second
+correct fail-closed pre-edit abort. It reported
+`experiment_status=inconclusive`, `delta_status=not-comparable`, and
+`write_attribution.status=not-evaluated`. The gate did not open, no
+Divide/Save action occurred, and no map change was made.
+
+The only gate blocker was one external `getBattery` request/response sequence
+inside `pre-split-app-init-quiet`. The request was observed at
+`2026-08-22T22:26:24.608445+00:00`, followed by its response approximately 94
+milliseconds later. It remains classified as `concurrent-external` even
+though the command is read-only and not map-related. The strict gate policy is
+unchanged; harmless background telemetry is not allowlisted from this single
+observation.
+
+All static-map preconditions otherwise passed: both app-init windows retained
+the same static `mid`, a byte-identical comparable request-associated `onMI`,
+stable `getAreaSet` keys/subset digests, and one complete grouped `onArI` set
+per window without structural errors. Both normalized `onArI` groups had
+`serial=3`, indexes `0,1,2`, derived length 1651, and derived SHA-256
+`aabdcb55ae2bcea24fe18eb0c37f27cbe99bcfb9a71fd30b7a147aeb99978b4c`.
+This stable pre-edit evidence does not change the run's inconclusive status.
+
+Before P2-09c the operator will temporarily stop the Home Assistant/Ecovacs
+integration, close the official Ecovacs app, ensure no other known Ecovacs
+client is active, and confirm that the mower is paused and stationary. The
+runner retains the same strict gate and operator sequence; the official app is
+opened only when prompted. P2-09 and P2-09b remain immutable. The fresh retry
+command is:
+
+```powershell
+.venv\Scripts\python.exe scripts\goat_map_phase2_capture.py `
+  --mode controlled-area-split `
+  --country NO `
+  --phase p2-09c-controlled-area-split `
+  --mower-state paused `
+  --device-class 2i0fns `
+  --baseline-seconds 45 `
+  --app-init-seconds 45 `
+  --between-init-quiet-seconds 10 `
+  --post-split-seconds 150 `
+  --post-split-reopen `
+  --post-reopen-seconds 60 `
+  --artifact-dir .goat-map-phase2\p2-09c-controlled-area-split `
+  --report-output goat-map-p2-09c-controlled-area-split-summary.json
+```
+
+##### P2-09c controlled Area Divide evidence
+
+Capture `212a37d365b54f77bbb6c0424ff94246` is retained immutable. Both
+pre-split app-init rounds passed the strict gate, the operator performed one
+Divide and one Save, and all postconditions passed. The report therefore has
+`experiment_status=complete` and
+`delta_status=controlled-structural-evidence`. A single outbound
+`setAreaSet` was observed and attributed by network timestamp. This documents
+`setAreaSet` only as the **observed Area Divide write command in this
+capture**; it is not generalized to other Area operations.
+
+The controlled delta retained `mid=1`, the request-associated `onMI`
+representation, and AreaSet `vw`. AreaSet `ar` changed from original
+representation length 124, SHA-256
+`72ebe704cb5890adb28ec1be05c228a6ef9addff0738df811808f671e0afd855`,
+and `infoSize=291` to a stable post-Divide representation. The directly
+comparable pre-Divide grouped `onArI` had `serial=3`, `type=0`, derived length
+1651, SHA-256
+`aabdcb55ae2bcea24fe18eb0c37f27cbe99bcfb9a71fd30b7a147aeb99978b4c`,
+`infoSize=6933`, and exact context signature
+`b4fc81d4375de7a0f636f001dc016fe0ca`. Post-Divide observations changed
+structurally, including a repeatable readback candidate with a different
+context signature. These remain opaque structural observations and are not
+canonical fixtures or semantic map fields.
+
+The outbound write carried raw `aid=1`, while the subsequent selected
+readbacks continued to carry raw `aid=0`. No semantic explanation is assigned
+to that difference. The nearby `onFwBuryPoint-bd_mapspotarea` event is kept
+only as sanitized timing correlation. It is not treated as a retained opaque
+map payload or as evidence about the write format.
+
+##### P2-10 controlled Area Merge inverse-control design
+
+P2-10 is a separate passive inverse control. It merges exactly the two work
+areas created by P2-09c with one Merge and one Save; those areas must not be
+merged manually before the run. The mower is paused and stationary, the Home
+Assistant/Ecovacs integration is stopped, the official app is closed at
+baseline, and no other known Ecovacs client is active. The diagnostic opens
+only normal MQ and sends no JMQ, `appping`, `getMI`, or other device-control
+call. The official app is the sole external control source in marked windows.
+
+The immutable P2-09c reference is cryptographically verified before MQTT
+observation. Its capture ID and the explicitly approved original AreaSet `ar`
+and grouped `onArI serial=3/type=0` values must match; otherwise the runner
+fails before capture. Two independent pre-merge app-init rounds must then pass
+the original static-family gate and match P2-09c's post-Divide split-state for
+request-associated `onMI` and AreaSet `ar`/`vw`. Both rounds require complete
+grouped `onArI`. If a direct `serial=3/type=0` group occurs in either round, it
+must occur in both and match byte-derived metadata across the rounds and the
+P2-09c post-Divide reference. Context signature and envelope cardinality
+remain separate observations. Any mismatch, structural error, state change,
+or concurrent external request outside allowed app windows closes the Merge
+gate and finalizes a safe inconclusive artifact before an edit prompt.
+
+After a passed gate, the operator selects only the two P2-09c areas, prepares
+one Merge, and saves once. Network timestamps remain authoritative. The first
+unique outbound map-write candidate is attributed conservatively; no command
+name is assumed, and missing/ambiguous attribution remains separate from
+experiment and delta status.
+
+The report performs two non-semantic comparisons:
+
+1. P2-10 pre-merge split-state to P2-10 post-merge state;
+2. P2-09c original pre-Divide state to P2-10 post-merge state.
+
+The second comparison tests byte-for-byte restoration of the approved AreaSet
+`ar` and grouped `onArI` values above, plus unchanged request-associated
+`onMI`, AreaSet `vw`, `mid=1`, and comparable `SpecialContour` evidence.
+Exact restoration is not required for experiment validity. A reproducible new
+third encoding is reported separately as `stable-third-encoding`; it is not
+forced into the original representation and is not interpreted semantically.
+No geometry, parser, decoder, or fixture promotion is part of P2-10.
+
+##### P2-10 immutable pre-merge abort and comparison correction
+
+Capture `3e4377c4cb784a749696309bfcc7178d` is retained unchanged as a
+fail-closed pre-merge abort. It reported `experiment_status=inconclusive`,
+`delta_status=not-comparable`, and
+`write_attribution.status=not-evaluated`. The Merge gate remained closed; no
+Merge, Save, or map change occurred.
+
+All ordinary preconditions passed: paused state, controlled-source isolation,
+`mid=1`, byte-identical request-associated `onMI`, stable AreaSet `ar`/`vw`,
+and one complete grouped `onArI` set in each app-init round. Both AreaSet
+representations also matched the immutable P2-09c post-Divide reference.
+
+Read-only verification showed that both new `serial=3/type=0` groups were
+byte-identical to each other **and** to P2-09c's post-Divide group:
+`infoSize=7002`, derived length 1683, SHA-256
+`a33b5a09d4cc46b8a70975ed8982aad97aece364cbd02e11c86fa493531654c0`,
+and context signature `c8c9b157b2874a80dcc06c3923718e503b`. The split-state was therefore
+stable and repeatable.
+
+The failed check came from an asymmetric derived comparison, not differing
+wire bytes. The immutable-reference path had populated the research-only
+offset-34 region measurements for the unknown `c8c9...` signature, while the
+live observer correctly left those fields unset because that opaque common
+body region is supported only for the observed `b4fc...` signature. The
+reference analysis now applies the same fail-closed region policy as the live
+observer. Re-evaluation then passes without changing the artifact or relaxing
+any gate condition. A retry must use a fresh phase/artifact/report and must not
+overwrite this abort.
+
+The P2-10b retry subsequently passed the corrected gate and the operator
+performed exactly one Merge and one Save. Capture continued through the
+primary post-merge readback and marked reopen, but the process then raised a
+`KeyError` while constructing the derived restoration report. The missing key
+was research metadata for an optional opaque common body region, not a wire
+payload or capture-policy failure. The approved original target specified the
+derived SHA/length, `infoSize`, and context signature, while the reporting
+helper incorrectly assumed that every optional region key was also present in
+that target mapping.
+
+The writer publishes artifacts atomically only after the experiment returns.
+Consequently P2-10b produced no artifact directory, manifest, records file, or
+summary: its in-memory MQTT evidence was lost when the process exited. The
+Merge must not be repeated merely to recreate this missing capture. Target
+construction now takes all structural comparison fields from the verified
+P2-09c original snapshot, removing the `KeyError` without adding semantics.
+
+Recovery is a distinct passive observation, not a retroactive claim that the
+lost network write was captured. It verifies the immutable P2-09c original and
+P2-10 pre-merge abort, opens the already merged map twice without edits, and
+requires stable request-associated `onMI`, AreaSet, and complete grouped
+`onArI` readbacks. The newly finalized artifact is then compared read-only as:
+
+1. P2-10 stable pre-merge split-state -> recovered post-merge state;
+2. P2-09c original pre-Divide state -> recovered post-merge state.
+
+The report uses
+`write_attribution.status=unavailable-capture-finalization-failed` and records
+the missing Merge/save traffic as an explicit confounder. A stable post state
+may be classified as `recovered-controlled-structural-evidence`, never as
+proof of an observed write command or timestamp. Recovery sends no control
+call and permits no map edit.
+
+P2-10c published immutable recovery artifact
+`8cb131902a0c47b4a589a20117b98213`. Both post-merge app-init rounds were
+structurally stable: request-associated `onMI`, both AreaSet keys, and the
+complete grouped `onArI serial=3/type=0` state were byte-identical across the
+two rounds. AreaSet `vw`, `mid=1`, request-associated `onMI`, and comparable
+`SpecialContour` values were unchanged from the approved controls.
+
+The post-merge state is a stable third encoding rather than byte-for-byte
+restoration. AreaSet `ar` is length 116, SHA-256
+`3ea94e0f116c4acacd1c7d64fbe6caa98c5fea82348cd3ccdef5c7aba0ada57a`,
+and `infoSize=281`, versus original 124/291 and split-state 136/458. Grouped
+`onArI serial=3/type=0` returned to original `infoSize=6933` and derived length
+1651, but has SHA-256
+`46a2843dcc5595a83d68c378cd51c534d8310315db0967fc016d0647dc9a8c97`
+and retains context signature `c8c9b157b2874a80dcc06c3923718e503b`; it is
+therefore byte-distinct from both the original `aabd...`/`b4fc...` state and
+the split `a33b...` state. No semantic meaning is assigned to this history-
+dependent structural result.
+
+One outbound `getBattery` request occurred during the post-merge baseline at
+`2026-08-23T08:50:07.808137+00:00`. Under the unchanged strict source-
+isolation policy it remains `concurrent-external`, so P2-10c must be reported
+as `experiment_status=recovery-readback-inconclusive` and
+`delta_status=inconclusive`. The original generated summary incorrectly
+promoted structural stability to
+`recovered-controlled-structural-evidence` without propagating the failed
+source-isolation precondition; that derived status is superseded. The artifact
+and its stable structural observations remain valid, but not controlled
+attribution. Status classification now keeps recovery preconditions,
+structural stability, and restoration outcome independent.
+
+P2-10d repeated the passive recovery with the strict source-isolation policy
+unchanged and published immutable capture
+`fad46b96aab44781881ce37b230ecf39`. No unexpected external control sequence
+was observed. Both post-merge app-init rounds passed and produced stable,
+byte-identical request-associated `onMI`, AreaSet `ar`/`vw`, and complete
+grouped `onArI serial=3/type=0` readbacks. The final independent status is:
+
+- `experiment_status=completed-action-with-recovered-post-readback`;
+- `delta_status=recovered-controlled-structural-evidence`;
+- `restoration_status=stable-third-encoding`;
+- `write_attribution.status=unavailable-capture-finalization-failed`.
+
+The clean P2-10d readback confirms the structural observations first seen in
+P2-10c without inheriting its `getBattery` source-isolation confounder. The
+three controlled states are:
+
+| State | AreaSet `ar` length / `infoSize` / SHA-256 | grouped `onArI serial=3/type=0` derived length / `infoSize` / SHA-256 / context signature |
+| --- | --- | --- |
+| P2-09c original pre-Divide | 124 / 291 / `72ebe704cb5890adb28ec1be05c228a6ef9addff0738df811808f671e0afd855` | 1651 / 6933 / `aabdcb55ae2bcea24fe18eb0c37f27cbe99bcfb9a71fd30b7a147aeb99978b4c` / `b4fc81d4375de7a0f636f001dc016fe0ca` |
+| stable post-Divide | 136 / 458 / `73ed28c0527fc122b0908c69ba70396c06741bd54d1d375a9b0a9488ed866dc2` | 1683 / 7002 / `a33b5a09d4cc46b8a70975ed8982aad97aece364cbd02e11c86fa493531654c0` / `c8c9b157b2874a80dcc06c3923718e503b` |
+| stable post-Merge | 116 / 281 / `3ea94e0f116c4acacd1c7d64fbe6caa98c5fea82348cd3ccdef5c7aba0ada57a` | 1651 / 6933 / `46a2843dcc5595a83d68c378cd51c534d8310315db0967fc016d0647dc9a8c97` / `c8c9b157b2874a80dcc06c3923718e503b` |
+
+The inverse operation therefore did not restore the original bytes. It
+produced a stable third representation: `onArI` returned to the original
+derived length and `infoSize`, while its digest and context signature remained
+different; AreaSet `ar` differed from both earlier states in length,
+`infoSize`, and digest. Request-associated `onMI`, AreaSet `vw`, `mid=1`, and
+comparable `SpecialContour` observations remained unchanged. This is
+controlled structural evidence only; it does not identify geometry or assign
+meaning to any changed byte range.
+
+Because P2-10b failed before atomic artifact publication, the Merge write and
+its immediate post-save traffic remain unavailable. No Merge command or
+network timestamp is attributed. P2-09c's `setAreaSet` remains only an observed
+Area Divide write command in that capture and is not generalized to Merge.
+
+##### P2-09c/P2-10d read-only three-state differential
+
+A metadata-only three-state analysis compares the immutable states A = P2-09c
+original pre-Divide, B = P2-09c stable post-Divide, and C = P2-10d stable
+post-Merge. The analysis preserves the source artifacts, reports no complete
+opaque value, and uses deterministic byte-sequence alignment in addition to
+raw absolute-offset comparisons. Alignment gaps and replacement spans are
+reported explicitly; equal numeric offsets after a length change are not
+treated as proof of a shared field boundary.
+
+AreaSet `type=ar` is state-/operation-sensitive as a whole. Its original
+representations have lengths 124/136/116 for A/B/C, a seven-byte common prefix
+and a one-byte common suffix. After the already proven strict Base64 layer,
+the lengths are 91/101/86 with a five-byte common prefix and no common suffix.
+All three original and derived digests differ. Pairwise representation-level
+SequenceMatcher ratios are A-B 0.277, A-C 0.267, and B-C 0.397. C is therefore
+somewhat closer to B by this purely structural measure, but no pair is close
+enough to support a shared semantic record layout. The report retains all
+insertion, deletion, replacement, equality, and gap spans without assigning
+meaning to them.
+
+The directly comparable complete grouped `onArI serial=3/type=0` streams are
+1651/1683/1651 bytes and all have different digests. Their outer bytes `0..16`
+classify as topology-reversed: A and C are byte-identical across the entire
+17-byte structural-header view, while B differs only at absolute offset 5 in
+this range. This is consistent with C restoring A's observed `infoSize=6933`
+candidate and total derived length, but it does not restore the remaining
+bytes.
+
+Bytes `17..33` classify as persistent post-edit. B and C share the exact
+`c8c9b157b2874a80dcc06c3923718e503b` context signature, while A has
+`b4fc81d4375de7a0f636f001dc016fe0ca`. No byte at the same absolute offset in
+this signature range returns to A. The whole observed B/C stream is also
+byte-identical from absolute offset 6 through 511 inclusive. Within the
+explicit absolute 34..701 comparison window, B and C have a 478-byte common
+prefix (absolute 34..511), 482 aligned matching bytes in total, and a
+SequenceMatcher ratio of 0.722. A-C have only 28 aligned matches and ratio
+0.042 in that same window. This window remains an opaque structural comparison
+range; the earlier 34..701 common-region finding for the `b4fc...` corpus is
+not generalized into a field for `c8c9...`.
+
+The tails after absolute offset 701 are structurally different in every state.
+A-C have 23 aligned matching bytes and ratio 0.024; B-C have 24 and ratio
+0.025. No substantial contiguous tail restoration is observed. Across the
+complete derived streams, C is much closer to B than A by the same alignment
+measure (B-C ratio 0.321 and 535 matching bytes versus A-C ratio 0.021 and 35
+matching bytes). The only robust contiguous A-C restoration is therefore the
+known outer structural-header range `0..16`; isolated equal bytes elsewhere
+are retained as observations, not promoted to fields.
+
+The three-way controls remain unchanged: request-associated `onMI`, AreaSet
+`vw`, `mid=1`, and comparable `SpecialContour` values. This rejects the
+hypotheses that visible work-area topology alone determines these encodings,
+that inverse Merge restores the pre-Divide bytes, or that equal grouped
+`onArI` length/`infoSize` implies equal bytes. It supports only structural
+claims: Divide and Merge produced reproducible state changes; the post-Divide
+context signature and a substantial following byte range persisted after
+Merge; and length restoration can occur without byte restoration.
+
+The observed AreaSet/onArI encoding is not solely determined by the visible
+pre/post work-area topology in this controlled cycle. Persistent or
+regenerated structural state is required to explain the stable third encoding,
+but its semantics are unknown.
+
+##### Controlled Area rename design
+
+The next approved differential is a metadata-only rename of exactly one
+existing work area in the stable P2-10d post-Merge C-state. A controlled no-op
+Area save remains a useful later feasibility control, but it does not block
+the rename experiment. If a no-op save is eventually possible, it may help
+separate rename association from generic edit/save regeneration.
+
+The diagnostic remains passive normal-MQ observation. It sends no JMQ,
+`appping`, `getMI`, or other device-control call. GOAT must be paused and
+stationary, Home Assistant/Ecovacs integration must be stopped, the official
+app must be closed at baseline, and no other Ecovacs client may be active. The
+official app is the only permitted external control source inside the marked
+app-init, rename-edit, rename-save, and reopen windows. Any unexplained control
+sequence outside those windows fails the precondition gate.
+
+Before the edit, two independent app-init rounds must reproduce the verified
+P2-10d C-state byte-for-byte for the comparable observations. The gate requires
+`mid=1`; AreaSet `ar` length 116, `infoSize=281`, and SHA-256
+`3ea94e0f116c4acacd1c7d64fbe6caa98c5fea82348cd3ccdef5c7aba0ada57a`;
+complete grouped `onArI serial=3/type=0` length 1651, `infoSize=6933`, SHA-256
+`46a2843dcc5595a83d68c378cd51c534d8310315db0967fc016d0647dc9a8c97`,
+and context signature `c8c9b157b2874a80dcc06c3923718e503b`. Comparable
+request-associated `onMI`, AreaSet `vw`, and `SpecialContour` observations must
+also match the immutable reference. Failure to reproduce any required value
+keeps the rename gate closed.
+
+After a passed gate, the operator selects exactly one work area under **Map
+Editing -> Area**, changes only its name to a short preselected ASCII value,
+and performs one Save. The old and new names are not retained. Only their
+operator-confirmed UTF-8 byte lengths and whether those lengths are equal are
+written to the sanitized report. Equal byte length is preferred but is not a
+validity requirement. Divide, Merge, contour, path, mowing settings, and all
+other map changes are prohibited. The temporary name must remain unchanged
+until artifact and analysis verification; a rename back would be a separate
+inverse capture.
+
+The first unambiguous outbound map-write in the armed edit/save windows is the
+authoritative write candidate. The command is not assumed in advance. If it is
+`setAreaSet`, only its sanitized structural request shape is compared with the
+P2-09c Divide request; field values receive no semantic interpretation.
+Missing or ambiguous write attribution remains separate from experiment and
+delta status.
+
+The primary automatic post-save readback includes both the armed save window
+and the following passive observation window. A separate close/reopen readback
+must reproduce the post-state for request-associated `onMI`, AreaSet `ar` and
+`vw`, complete grouped `onArI`, and comparable `SpecialContour` values. The
+report preserves `unchanged`, `occurrence-count-changed`, `value-changed`,
+`before-only`, and `after-only` classifications; presence/absence is not
+reported as a byte delta.
+
+If AreaSet `ar` and/or grouped `onArI` changes, the result is described only as
+**rename-associated / metadata-edit-associated structural change**. It does
+not establish that the name is encoded in either structure. Without a
+controlled no-op Save, generic save/edit-generation remains an alternative
+explanation. Byte-identical `ar` and `onArI` would instead be evidence against
+an ordinary Area rename alone regenerating those representations. A change in
+only one family is retained as a structural separation without assigning
+meaning to its bytes. No parser, decoder, geometry model, or production
+integration is part of this experiment.
+
+##### P2-11 controlled rename result and derived status review
+
+P2-11 published immutable capture `861a4bfd6d1f4fa9b0b24e370c6e2454`
+after one controlled five-byte ASCII-name change and one Save. The precondition
+gate, operator action, write attribution, and postconditions completed. The
+observed outbound command was `setAreaSet`. Its sanitized request shape
+contained `act`, `mssid`, `name`, and `type`; the controlled P2-09c Divide
+request shape contained `act`, `mssid`, `type`, and `value`. These are
+capture-specific command-shape observations only. They do not establish a
+general semantic mapping for any request field.
+
+AreaSet `ar` changed from the stable pre-rename representation to a new value
+that was byte-identical in the primary post-save and close/reopen windows. The
+directly comparable complete grouped `onArI serial=3/type=0`, request-associated
+`onMI`, AreaSet `vw`, `mid=1`, and comparable `SpecialContour` values remained
+byte-identical. The primary post-save window also contained a cadence-associated
+52-character `onMI` form and `serial=1/type=-1` grouped `onArI`, while the reopen
+window contained the request-associated 876-character `onMI` form and
+`serial=3/type=0` group. This is missing role overlap between windows, not
+contradictory bytes.
+
+The original summary coupled this incomplete role coverage to the overall
+status. A read-only v2 status review leaves the artifact, manifest, and original
+summary unchanged, marks the original summary `superseded-for-status-only`, and
+reports independently:
+
+- `experiment_status=completed-action`;
+- `delta_status=controlled-partial-structural-evidence`;
+- `role_comparison.status=role-comparison-incomplete`.
+
+The retained conclusion is: `Area Rename produced a stable value change in
+AreaSet ar, while directly comparable grouped onArI serial=3/type=0,
+request-associated onMI, vw, mid and comparable SpecialContour values remained
+byte-identical.` This does not locate a name in AreaSet `ar`; a generic
+save/edit-generation effect remains an untested alternative.
+
+##### P2-12 controlled rename-restore design
+
+P2-12 is a separate inverse capture that changes only the same work-area name
+from `temp2` back to `temp1`. Both names are exactly five UTF-8 bytes. The
+diagnostic records only the two byte lengths and equality, not either name.
+Normal MQ observation remains passive: no JMQ, diagnostic `appping`, `getMI`,
+or other device-control call is sent. GOAT must be paused and stationary,
+Home Assistant/Ecovacs integration stopped, the app closed at baseline, and no
+other Ecovacs client active.
+
+Two pre-restore app-init rounds must reproduce the immutable P2-11 B-state. The
+gate requires `mid=1`, exact AreaSet `ar`, complete grouped `onArI
+serial=3/type=0`, request-associated `onMI`, AreaSet `vw`, and comparable
+`SpecialContour` values in both rounds, with no `concurrent-external` sequence.
+Only an explicit `PRECONDITION PASSED` opens the edit gate. A missing required
+role, unstable value, mismatch with P2-11 B, mower-state violation, or external
+control outside the allowed app windows aborts before the name is changed.
+
+After a passed gate, the operator selects the same area, changes only `temp2`
+to `temp1`, and performs exactly one Save. The first unambiguous outbound
+map-write is attributed without assuming its command. A `setAreaSet` request,
+if observed, is compared structurally with the P2-11 Rename and P2-09c Divide
+request shapes without semantic field interpretation. Primary post-save and
+separate close/reopen windows then establish the post-restore state.
+
+The report keeps `experiment_status`, `delta_status`, `write_attribution`,
+`role_comparison`, and family-specific comparisons independent. AreaSet `ar`
+is compared across A = P2-11 pre-rename, B = P2-11 post-rename, and C = P2-12
+post-restore using original representation bytes, strict-Base64-derived bytes,
+length, SHA-256, and `infoSize`. Its classifications are `byte-restored` for
+A == C != B, `persistent-rename-state` for B == C != A,
+`stable-third-encoding` when all three differ, and `not-comparable` when a
+stable C value is missing. Missing request/cadence role overlap after the
+operator action is incomplete coverage only; it does not invalidate an
+otherwise complete AreaSet `ar` inverse delta. No parser, decoder, or semantic
+map interpretation is introduced.
+
+##### P2-12/P2-12b immutable pre-edit aborts
+
+The first two rename-restore attempts correctly failed closed before the edit
+gate. P2-12 capture `cc5e19e65da9421abcddbf0cc5886709` and P2-12b capture
+`e6456883d2f3404e9a110dc921f4c041` are immutable pre-edit evidence. Neither
+run performed Rename, Save, or any other map change, so the temporary area name
+remains `temp2`. Both reports retain `experiment_status=inconclusive`,
+`delta_status=not-comparable`, and
+`write_attribution.status=not-evaluated`.
+
+In both runs every static P2-11 B-state check passed: `mid=1`, AreaSet `ar` and
+`vw`, request-associated `onMI`, complete grouped `onArI serial=3/type=0`,
+comparable `SpecialContour`, structural validation, and paused mower state. The
+only gate blocker was one outbound `getBattery` request during the passive
+pre-restore baseline:
+
+- P2-12: `2026-08-23T13:35:55.451077+00:00`;
+- P2-12b: `2026-08-23T13:41:55.774298+00:00`;
+- observed cross-capture interval: approximately `360.323` seconds.
+
+This is classified conservatively as **periodic concurrent-external read-only
+polling, source unattributed**. It is not attributed to Home Assistant, the
+official Ecovacs app, or any other client. The strict gate policy remains
+unchanged.
+
+Before P2-12c, a separate passive poller-isolation check observes normal MQ for
+at least 480 seconds with GOAT paused/stationary, Home Assistant Core fully
+stopped, all known official-app instances force-closed, and other known
+Ecovacs/deebot_client processes stopped. The diagnostic subscribes only to
+normal MQ and issues no JMQ, `appping`, `getMI`, or other device-control call.
+It records sanitized command and request/response timing, same-command request
+intervals, and no client identity or complete MQTT topic.
+
+An uninterrupted quiet window with no external request is classified
+`verified-for-retry`. Any request leaves the environment
+`not-verified-for-retry`, with source attribution `unknown`; a repeated
+`getBattery` interval in the 330–390 second range is reported as an observed
+approximately-360-second cadence. Disappearance while HA Core is stopped is
+only evidence consistent with HA Core as source. Source attribution would
+require a separate controlled restart that makes the polling return; that
+restart is not part of this isolation check.
+
+##### P2-12c controlled rename restore
+
+After a request-free passive isolation check, P2-12c passed the unchanged
+strict gate and published immutable capture
+`12f3b733c49748ebb41e9f6f99dca307`. The controlled action changed only the
+same area name from `temp2` back to `temp1`, with both representations kept at
+five UTF-8 bytes, and performed exactly one Save. The result is retained as
+`experiment_status=completed-action` and
+`delta_status=controlled-partial-structural-evidence`. The outbound write was
+unambiguously observed as `setAreaSet` at
+`2026-08-23T14:11:19.903904+00:00`; this remains capture-specific command-shape
+evidence, not a general field mapping.
+
+The controlled three-state result is:
+
+| State | Visible name context | AreaSet `ar` representation length / `infoSize` / SHA-256 |
+| --- | --- | --- |
+| A | pre-P2-11 `temp1` | 116 / 281 / `3ea94e0f116c4acacd1c7d64fbe6caa98c5fea82348cd3ccdef5c7aba0ada57a` |
+| B | P2-11 `temp2` | 124 / 286 / `95f8e54faf889ce346bc58bc6ce479f1ba9c5aded40439c79c0186c90b17c8e1` |
+| C | P2-12c restored `temp1` | 124 / 286 / `472b23f62fd4f8370dfcd242b54e966cf54463523f30bb20cbd52ce8110d23ba` |
+
+The C representation was byte-identical in the primary post-save and reopen
+windows, but byte-distinct from both A and B. Thus Rename `temp1` to `temp2`
+produced a new AreaSet `ar`, while inverse Restore `temp2` to `temp1` produced
+a stable third encoding rather than restoring A. Visible area name alone does
+not determine the complete AreaSet `ar` representation in this controlled
+cycle.
+
+Directly comparable grouped `onArI serial=3/type=0`, request-associated
+`onMI`, AreaSet `vw`, `mid=1`, and comparable `SpecialContour` values remained
+byte-identical through A, B, and C. Primary post-save again contained the
+cadence-associated 52-character `onMI` and `serial=1/type=-1` `onArI` roles,
+while reopen contained the request-associated 876-character `onMI` and
+`serial=3/type=0` group. This is incomplete role overlap without contradictory
+comparable bytes, so it does not invalidate the complete AreaSet `ar` delta.
+
+The result supports only a family-level structural separation. Persistent or
+regenerated structural state and generic save/edit-generation remain possible
+explanations. It does not prove that the name itself is encoded in AreaSet
+`ar`, and it introduces no parser, decoder, or geometry interpretation.
+
+##### No-op Area Save feasibility checkpoint
+
+The next proposed control asks whether **Map Editing -> Area** exposes an
+active Save/Confirm action after selecting an existing work area without
+changing any value. No Save may be performed during this UI-only feasibility
+check because no capture runner is armed. The initial UI-only observation found
+an apparently active Save/Confirm control without visible dirty state and did
+not press it. This initially suggested `no-op-save-feasible`, but did not test
+the validation that occurs when Save is pressed.
+
+The first P2-13 attempt is retained only as a UI-feasibility observation. Its
+strict precondition passed and the Save window was armed, but the app then
+required a name value before Save could complete. No Save was performed, no
+intentional map change was made, and the operator stopped the process with
+Ctrl+C. Capture publication did not complete, so no finished summary is
+constructed from the interrupted run and its artifact directory must not be
+reused.
+
+The resulting UI conclusion is:
+
+`true no-op Area Save is not feasible in this UI flow because the app requires
+a name value before Save can complete.`
+
+The earlier `no-op-save-feasible` assessment was therefore incomplete: an
+apparently active Save control was not sufficient to prove that the action
+could pass UI validation without supplying metadata. P2-13 must not be rerun
+or presented as a completed no-op experiment.
+
+##### P2-13b controlled same-value rename resubmission
+
+P2-13b is a separate metadata-resubmission experiment, not a no-op. The
+operator selects the same work area used by P2-11/P2-12c, opens Rename, enters
+the already-visible value `temp1` again, changes nothing else, and performs
+exactly one Save. Both old and submitted values are five UTF-8 bytes and the
+visible end state is unchanged, but a deliberate metadata submission occurs.
+
+The runner uses passive normal-MQ observation and the same strict client
+isolation as P2-12c. Two pre-resubmission app-init rounds must reproduce the
+immutable P2-12c C-state: `mid=1`, AreaSet `ar`, complete grouped
+`onArI serial=3/type=0`, request-associated `onMI`, AreaSet `vw`, comparable
+`SpecialContour`, paused/stationary mower, and no `concurrent-external` traffic.
+Only `PRECONDITION PASSED` opens the Rename flow.
+
+Before Save, the runner explicitly instructs the operator to enter exactly the
+currently visible name `temp1` again. The separate `SAME` acknowledgement
+confirms that the existing value was `temp1`, the submitted value is also
+`temp1`, and no other field changed. Any other response aborts before Save.
+Only the subsequent `SAME-NAME RESUBMISSION SAVE WINDOW ARMED` prompt permits
+one Save.
+
+The primary byte-preserving comparison is immutable P2-12c state A versus the
+stable P2-13b post-resubmission state B. A byte-identical AreaSet `ar` is
+classified `same-value-resubmission-no-structural-change`; a stable new encoding
+is `same-value-resubmission-associated-structural-change`; missing or unstable
+post-readback is `not-comparable`. Grouped `onArI serial=3/type=0`,
+request-associated `onMI`, AreaSet `vw`, `mid`, and comparable `SpecialContour`
+are control families. Role coverage remains separate from AreaSet delta
+validity.
+
+Outbound write attribution does not assume a command. If `setAreaSet` is
+observed, only its sanitized request shape is compared with P2-11 Rename and
+P2-12c Restore. Equal request fields are not treated as proof of equal internal
+semantics. No parser, decoder, or geometry interpretation is introduced.
+
+P2-13b ended as a UI-feasibility result rather than a completed controlled
+capture. Its strict precondition passed and the operator attempted the exact
+same-name resubmission `temp1` to `temp1`, but the app rejected the value with
+`Navnet finnes allerede` before Save could complete. No Save and no intentional
+map change occurred. Capture publication did not finish after the interrupted
+runner, so no completed summary is constructed and the existing P2-13b
+artifact directory must not be reused.
+
+The resulting UI conclusion is:
+
+`same-value rename resubmission is not feasible through this UI flow because
+the app rejects the current name as already existing before Save can complete.`
+
+AreaSet edit/write research is paused at this point. P2-09c through P2-12c
+remain diagnostics evidence only; Divide, Merge, Rename, and other Area writes
+are not candidates for production support in the current GOAT Map MVP.
+
+### 2.3 GOAT Map MVP: read-only `onMI` reconciliation
+
+This checkpoint reconciles the O1200 reference viewer, the byte-preserving P2
+fixtures, the existing compression helper, the experimental
+`feat/mower-onmi-static-map` parser branch, and the shared coordinate model in
+[upstream PR #1567](https://github.com/DeebotUniverse/client.py/pull/1567) and
+[roadmap #1785](https://github.com/DeebotUniverse/client.py/issues/1785). It
+does not add a decoder or production integration on the current branch.
+
+#### Which `onMI` form contains geometry
+
+The request-associated 876-character representation contains the static
+main-map geometry. Its verified layers are:
+
+| Layer | Length | SHA-256 / observed value |
+| --- | ---: | --- |
+| original canonical Base64 text | 876 | `12cbcb330c3b91334f72b41470e09361310853554f8292bc83e4dd72dfbdd5bb` |
+| strict-Base64-derived bytes | 657 | `9a023cb8ffcb8ed19c66fc08430b2069c02e5de44a1153aadb5ea0d8ca35a1e2` |
+| decompressed JSON bytes | 1756 | `6ce460c08edc3a59acb0b43d1d8db2080bf0b01ed4bc95fdbe223a3aec2bfbdb` |
+
+The 1756-byte result is a JSON list with two observed groups. Group `"1"`
+contains exactly one geometry record beginning
+`s1;1;-4500,-650;...`; group `"2"` contains the opaque value `"1"`.
+Three repeated messages in the sanitized reference capture contain the same
+decoded bytes, and the same 876-character form recurs across the P2 corpus.
+
+The cadence-associated 52-character representation does **not** contain a
+complete geometry record:
+
+| Layer | Length | SHA-256 / observed value |
+| --- | ---: | --- |
+| original canonical Base64 text | 52 | `d7d0e5374acebd6b57c06fd2b5a6a62a6136f6664845ca6e86892dab93181ba1` |
+| strict-Base64-derived bytes | 38 | `d1878e21ccbdc2110e35bc2a15950c2b618f71ddbf7e1709134c6fc9502870bf` |
+| decompressed JSON bytes | 25 | `04e291cf6b9321af9e38c21e62ffbb03b367b3d94a8290480b5ceae63a355b04` |
+
+Its complete decoded value is structurally equivalent to
+`[["1","s1;0;"],["2","0"]]`. It has neither a start coordinate nor an RLE
+direction string. It must therefore remain a cadence-associated state form,
+not be promoted to static geometry and not be given a more specific semantic
+name.
+
+#### Representation and compression framing
+
+Strict canonical Base64 removal produces the 657- or 38-byte representation.
+Both are an observed trimmed LZMA-Alone form:
+
+- byte `0` is the observed LZMA properties byte `0x5d`;
+- bytes `1..4` are the little-endian dictionary size `0x00040000`;
+- bytes `5..8` are the little-endian low 32 bits of decompressed size and match
+  envelope `infoSize` (`1756` or `25` here);
+- the high four bytes of the normal eight-byte LZMA-Alone uncompressed-size
+  field are omitted and must be reinserted before decompression;
+- compressed data begins at original offset `9`.
+
+This is independently supported by the reference viewer and upstream #1567,
+and decompression yields JSON whose exact byte length matches `infoSize`.
+Consequently, the Phase 2 `StructuralHeaderView` observations at bytes `9+`
+must not be promoted to wire-format header fields: its invariant `9..15`, raw
+family classifier at `16`, context signatures at `17..33`, and later regions
+are byte-preserving correlations inside the compressed stream. They remain
+useful research fingerprints but are superseded as candidate outer framing
+semantics by the proven LZMA boundary.
+
+The existing Rust `decompress_base64_data` helper can decompress both fixtures.
+It currently inserts the four missing bytes before raw byte `8`; the canonical
+trimmed-header boundary is after byte `8` (insertion position `9`). These are
+byte-equivalent for the present fixtures because raw byte `8` is zero, but a
+production parser should add a focused helper regression test before relying
+on payloads whose decompressed size uses a non-zero fourth byte.
+
+#### JSON groups, segments, and points
+
+The geometry chain is now reproducible without unknown-field interpretation:
+
+1. Parse the decompressed value as a list of groups while preserving order.
+2. Preserve the group identifier. In the geometry fixture, group `"1"` holds
+   the single observed segment record; group `"2"` remains opaque.
+3. Split the geometry record at the first three semicolons only:
+   `object_id="s1"`, `map_id="1"`, start `(-4500,-650)`, followed by the raw
+   RLE representation.
+4. Strictly tokenize the RLE as direction `1..8` with an optional positive
+   repeat count `(n)`. Reject gaps, unknown characters, zero repeats, missing
+   coordinates, and incomplete records.
+5. Begin the point sequence with the stated start coordinate. Expand each
+   direction by the observed step of 50 coordinate units:
+
+   `1=(+1,0)`, `2=(+1,-1)`, `3=(0,-1)`, `4=(-1,-1)`,
+   `5=(-1,0)`, `6=(-1,+1)`, `7=(0,+1)`, `8=(+1,+1)`.
+
+6. Preserve group, segment, raw record, raw RLE, start, and resulting points.
+   Do not flatten distinct segments or silently close a path.
+
+The O1200 result is 2336 points with bounds
+`x=-34350..5750`, `y=-24350..21350`. It matches the independent reference
+viewer point-for-point: mismatch count zero and maximum coordinate difference
+zero. The last point is `(-4400,-650)`, leaving an observed `(100,0)` closure
+gap from the first point; neither parser nor renderer should fabricate the
+missing closure edge at this layer.
+
+The `groups -> segments -> points` model matches the structural event direction
+agreed in #1567 and #1785. A narrow `onMI` parser should therefore expose one
+group containing one segment for this fixture rather than make a flattened
+point list the sole source of truth. The non-geometry group and all unhandled
+records must remain preserved/opaque or cause explicit analysis fallback,
+rather than receive guessed meanings.
+
+Still opaque are group `"2"`, the meaning of `s1`, the semantics of envelope
+`centerX`, `centerY`, `using`, `serial`, and `type`, and whether the observed
+50-unit step generalizes beyond the captured O1200 firmware. `batid` is useful
+only as transient grouping metadata and must not be logged or exposed as map
+content.
+
+#### Narrow production parser proposal
+
+The geometry chain is sufficiently proven for a small parser-only PR:
+
+1. recognize only `onMI` with canonical Base64, `index=0`, a decompressed JSON
+   length equal to `infoSize`, and the exact validated geometry-record shape;
+2. accept the request-associated geometry form and return analysis fallback for
+   the cadence form or any unknown structure;
+3. emit a structured static-map event using the common group/segment/point
+   representation, preserving raw segment text but excluding `info`, `batid`,
+   topics, and transport/auth data;
+4. verify envelope `mid` against the record map ID without assigning meaning to
+   other envelope fields;
+5. use the repository-safe 876-character fixture for strict parsing,
+   corruption, size, RLE, coordinate, unknown-record, and exact 2336-point
+   reference tests; retain the 52-character fixture as a required non-geometry
+   fallback test;
+6. add no rendering, zone parser, position transform, Map capability wiring,
+   device-control call, or write support in this PR.
+
+The existing `feat/mower-onmi-static-map` branch is a strong implementation
+prototype, but its event currently flattens the one observed segment. It should
+be reconciled with the shared group/segment/point model before being proposed
+upstream, and source metadata should not expose `batid`.
+
+#### MVP dependency plan
+
+1. **`onMI` static boundary:** land the parser-only event above and cache the
+   latest valid request-associated geometry per `mid`.
+2. **Zones:** parse complete grouped `onArI` and `getAreaSet` into the same
+   group/segment/point primitives. Register a zone into the main-map frame only
+   where the captured longest-shared-direction anchor match passes explicit
+   thresholds; keep local points and an unregistered state otherwise. Names and
+   IDs come only from directly observed AreaSet fields. No Area writes.
+3. **Mower and dock:** consume `onPos`/`getPos` through `PositionsEvent`, accept
+   a coordinate only when its own `invalid` value permits it, and require a
+   compatible `mid`. Treat the values as internal map coordinates, not GPS.
+   Expose dock position only when `chargePos.invalid == 0`; the captured
+   `chargePos.invalid == 1` and `(0,0)` must remain unavailable. This follows
+   the safety discussion in
+   [upstream PR #1588](https://github.com/DeebotUniverse/client.py/pull/1588).
+4. **HA-visible map:** after boundary, registered zones, and valid positions
+   share one verified coordinate representation, add an isolated mower adapter
+   to the existing `Map` capability/rendering path. Enable it only for hardware
+   classes with direct capture coverage, beginning with `2i0fns`; keep vacuum
+   behavior unchanged. `onMapTrack`, editing commands, and all write support
+   remain out of the MVP.
 
 ### 2.4 Decode `onMapTrack` second
 

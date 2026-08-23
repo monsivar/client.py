@@ -24,6 +24,7 @@ from .goat_map_segment_grouping import (
     OpaqueSegmentSet,
     SegmentGroupingError,
     assemble_opaque_segment_set,
+    normalize_segment_cardinality,
 )
 
 if TYPE_CHECKING:
@@ -212,9 +213,14 @@ def _artifact_observations(
                 record.observed_at,
                 marker.observed_at,
             )
+        normalized_serial = normalize_segment_cardinality(
+            "serial",
+            segment_input.serial,
+            allow_zero=False,
+        )
         identity = (
             segment_input.batid,
-            segment_input.serial,
+            normalized_serial,
             segment_input.info_size,
             segment_input.mid,
             segment_input.type,
@@ -719,15 +725,15 @@ def _count_values(values: Any) -> list[dict[str, Any]]:
 
 def _required_decimal_integer(record: VerifiedArtifactRecord, path: str) -> int:
     value = _required_scalar(record, path)
-    if isinstance(value, bool):
-        message = f"{path} is not a decimal integer"
-        raise OnAriFramingResearchError(message)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value.isdecimal():
-        return int(value)
-    message = f"{path} is not a decimal integer"
-    raise OnAriFramingResearchError(message)
+    try:
+        return normalize_segment_cardinality(
+            path,
+            value,
+            allow_zero=path.endswith(".index"),
+        )
+    except SegmentGroupingError as err:
+        message = f"{path} is not a canonical decimal integer"
+        raise OnAriFramingResearchError(message) from err
 
 
 def _required_envelope_value(

@@ -7,7 +7,6 @@ import pytest
 
 from deebot_client.diagnostics.goat_map_inner_structure_view import (
     InnerStructureFamilyMismatchError,
-    InnerStructureSerialMismatchError,
     InnerStructureViewTooShortError,
     recognize_inner_structure,
 )
@@ -70,11 +69,10 @@ def test_both_onmi_forms_map_to_same_observed_context_class() -> None:
 
     assert {view.observed_context_class for view in views} == {"observed-onMI"}
     assert views[0].context_signature_raw != views[1].context_signature_raw
-    assert all(view.expected_envelope_serial is None for view in views)
-    assert all(view.serial_matches_observed_context is None for view in views)
+    assert all(view.envelope_serial is None for view in views)
 
 
-def test_request_onari_serial_two_signature_is_validated() -> None:
+def test_observed_b4_onari_signature_preserves_envelope_serial_separately() -> None:
     derived = _framed(
         family_byte=0x14,
         info_size=6316,
@@ -85,13 +83,12 @@ def test_request_onari_serial_two_signature_is_validated() -> None:
 
     view = recognize_inner_structure(header, envelope_serial=2)
 
-    assert view.observed_context_class == "observed-onArI-serial-2"
+    assert view.observed_context_class == "observed-onArI-b4-signature"
     assert view.context_signature_raw == _ONARI_SERIAL_2_SIGNATURE
-    assert view.expected_envelope_serial == 2
-    assert view.serial_matches_observed_context is True
+    assert view.envelope_serial == 2
 
 
-def test_cadence_onari_serial_one_signature_is_validated() -> None:
+def test_observed_63_onari_signature_preserves_envelope_serial_separately() -> None:
     derived = _framed(
         family_byte=0x14,
         info_size=1303,
@@ -102,10 +99,9 @@ def test_cadence_onari_serial_one_signature_is_validated() -> None:
 
     view = recognize_inner_structure(header, envelope_serial=1)
 
-    assert view.observed_context_class == "observed-onArI-serial-1"
+    assert view.observed_context_class == "observed-onArI-63-signature"
     assert view.context_signature_raw == _ONARI_SERIAL_1_SIGNATURE
-    assert view.expected_envelope_serial == 1
-    assert view.serial_matches_observed_context is True
+    assert view.envelope_serial == 1
 
 
 def test_remainder_and_original_round_trip_are_byte_identical() -> None:
@@ -141,13 +137,12 @@ def test_unknown_context_signature_is_preserved_without_guessing() -> None:
 
     assert view.observed_context_class == "unknown"
     assert view.context_signature_raw == signature
-    assert view.expected_envelope_serial is None
-    assert view.serial_matches_observed_context is None
+    assert view.envelope_serial == 99
     assert view.remainder == remainder
     assert view.to_bytes() == derived
 
 
-def test_serial_one_signature_with_envelope_serial_two_is_explicit_mismatch() -> None:
+def test_63_signature_does_not_imply_envelope_cardinality() -> None:
     derived = _framed(
         family_byte=0x14,
         info_size=1303,
@@ -156,14 +151,16 @@ def test_serial_one_signature_with_envelope_serial_two_is_explicit_mismatch() ->
     )
     header = recognize_structural_header(derived, envelope_info_size=1303)
 
-    with pytest.raises(InnerStructureSerialMismatchError) as error:
-        recognize_inner_structure(header, envelope_serial=2)
+    view = recognize_inner_structure(header, envelope_serial=2)
 
-    assert error.value.expected == 1
-    assert error.value.observed == 2
+    assert view.observed_context_class == "observed-onArI-63-signature"
+    assert view.envelope_serial == 2
 
 
-def test_serial_two_signature_with_envelope_serial_one_is_explicit_mismatch() -> None:
+@pytest.mark.parametrize("envelope_serial", [2, 3])
+def test_b4_signature_does_not_imply_envelope_cardinality(
+    envelope_serial: int,
+) -> None:
     derived = _framed(
         family_byte=0x14,
         info_size=6316,
@@ -172,11 +169,11 @@ def test_serial_two_signature_with_envelope_serial_one_is_explicit_mismatch() ->
     )
     header = recognize_structural_header(derived, envelope_info_size=6316)
 
-    with pytest.raises(InnerStructureSerialMismatchError) as error:
-        recognize_inner_structure(header, envelope_serial=1)
+    view = recognize_inner_structure(header, envelope_serial=envelope_serial)
 
-    assert error.value.expected == 2
-    assert error.value.observed == 1
+    assert view.observed_context_class == "observed-onArI-b4-signature"
+    assert view.context_signature_raw == _ONARI_SERIAL_2_SIGNATURE
+    assert view.envelope_serial == envelope_serial
 
 
 def test_offset_34_variation_does_not_change_context_classification() -> None:
@@ -192,7 +189,7 @@ def test_offset_34_variation_does_not_change_context_classification() -> None:
         views.append(recognize_inner_structure(header, envelope_serial=1))
 
     assert {view.observed_context_class for view in views} == {
-        "observed-onArI-serial-1"
+        "observed-onArI-63-signature"
     }
     assert {view.remainder[0] for view in views} == {0xE6, 0xF9}
 

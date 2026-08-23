@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiomqtt import Message
 import orjson
@@ -42,7 +42,7 @@ def _writer(
     )
 
 
-def _records(artifact_dir: Path) -> list[dict[str, object]]:
+def _records(artifact_dir: Path) -> list[dict[str, Any]]:
     return [
         orjson.loads(line)
         for line in (artifact_dir / "records.jsonl").read_bytes().splitlines()
@@ -229,6 +229,22 @@ def test_capture_supports_complete_static_map_command_family(tmp_path: Path) -> 
         "getAreaSet",
         "onAreaSet",
     }
+
+
+def test_snapshot_records_is_detached_and_preserves_explicit_allowlist(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path / "snapshot")
+    writer.record_mqtt(
+        "iot/atr/onMI/device/class/resource/j",
+        orjson.dumps({"body": {"data": {"mid": "1", "info": "opaque"}}}),
+    )
+
+    snapshot = writer.snapshot_records()
+    snapshot[0]["command"] = "mutated-in-test"
+
+    assert writer.snapshot_records()[0]["command"] == "onMI"
+    assert writer.captured_commands == frozenset(writer.finalize()["captured_commands"])
 
 
 def test_controlled_edit_allowlist_adds_map_signals_without_capturing_other_data(

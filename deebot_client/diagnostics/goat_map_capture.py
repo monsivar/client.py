@@ -187,6 +187,16 @@ class GoatMapCaptureWriter:
         """Return the anonymous identifier generated for this artifact only."""
         return self._capture_id
 
+    @property
+    def captured_commands(self) -> frozenset[str]:
+        """Return the explicit opaque-payload allowlist for this capture."""
+        return self._capture_commands
+
+    def snapshot_records(self) -> tuple[dict[str, Any], ...]:
+        """Return a detached metadata-only view of records captured so far."""
+        self._ensure_writable()
+        return tuple(orjson.loads(orjson.dumps(record)) for record in self._records)
+
     def set_context(self, window: str, mower_state: MowerState) -> None:
         """Update experiment context inherited by subsequent capture records."""
         self._ensure_writable()
