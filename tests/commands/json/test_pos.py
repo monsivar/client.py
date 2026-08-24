@@ -85,3 +85,36 @@ async def test_GetPos_all_positions_invalid() -> None:
         firmware_event,
         handling_result=HandlingResult(HandlingState.ANALYSE_LOGGED),
     )
+
+
+async def test_GetPos_invalid_two_is_not_published() -> None:
+    """O1200 nonzero invalid statuses are not emitted as positions."""
+    data = {
+        "deebotPos": {"x": 10, "y": 20, "a": 30, "invalid": 0},
+        "chargePos": [{"x": 99, "y": 88, "a": 77, "invalid": 2}],
+    }
+    json, firmware_event = get_request_json(get_success_body(data))
+
+    await assert_command(
+        GetPos(),
+        json,
+        (
+            firmware_event,
+            PositionsEvent(
+                positions=[Position(type=PositionType.DEEBOT, x=10, y=20, a=30)]
+            ),
+        ),
+    )
+
+    invalid_data: dict[str, Any] = {
+        "deebotPos": {"x": 10, "y": 20, "a": 30, "invalid": 2},
+        "chargePos": [{"x": 99, "y": 88, "a": 77, "invalid": 2}],
+    }
+    json, firmware_event = get_request_json(get_success_body(invalid_data))
+
+    await assert_command(
+        GetPos(),
+        json,
+        firmware_event,
+        handling_result=HandlingResult(HandlingState.ANALYSE_LOGGED),
+    )
