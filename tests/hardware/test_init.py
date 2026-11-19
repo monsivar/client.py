@@ -116,7 +116,7 @@ async def test_get_static_device_info(
 
 @pytest.mark.parametrize(
     ("class_", "expected"),
-    [("2i0fns", True), ("5xu9h3", False)],
+    [("2i0fns", True), ("51rcxt", True), ("5xu9h3", False)],
 )
 async def test_mowing_job_progress_capability(class_: str, *, expected: bool) -> None:
     """Test mowing job progress capability."""
